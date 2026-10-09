@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class RecordingService extends Service {
     static final String STOP = "cn.personal.recorder.STOP";
+    static final String EXTRA_CATEGORY = "recording-category";
     static volatile boolean active;
     static volatile String state = "尚未录音";
     static volatile long startedElapsed;
@@ -38,7 +39,7 @@ public final class RecordingService extends Service {
             NotificationManager nm = getSystemService(NotificationManager.class);
             nm.createNotificationChannel(new NotificationChannel("recording", "录音状态", NotificationManager.IMPORTANCE_LOW));
             startForeground(1, notification("正在准备录音"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-            recorder = new AacRecorder(this);
+            recorder = new AacRecorder(this, intent == null ? null : intent.getStringExtra(EXTRA_CATEGORY));
             wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EncryptedRecorder:capture");
             wakeLock.acquire(60 * 60 * 1000L);
             active = true; startedElapsed = 0; state = "正在准备麦克风与编码器";

@@ -49,9 +49,10 @@ public final class AnalysisService extends Service {
                     if (entry == null || entry.chunks.length == 0) throw new java.io.IOException("音频副本已移除，无法重新转写");
                     JSONObject doc = LocalTranscriber.transcribe(this, entry, intent.getIntExtra("speaker-count", -1), cancelled::get, this::progress); LocalTranscriber.check(cancelled::get); TextStore.save(this, doc);
                 } else {
+                    if (!CategoryStore.aiAllowed(this, recording)) throw new java.io.IOException("本分类未允许外部 AI 读取文字，请在分类管理中明确开启");
                     JSONObject doc = TextStore.read(this, recording); if (doc == null) throw new java.io.IOException("请先提取录音文字");
                     String text = (doc.getBoolean("complete") ? "完整录音\n" : "部分录音：未正常结束，仅包含已保存片段\n") + Transcript.text(doc);
-                    String summary = DeepSeekClient.summarize(text, new Vault(this).aiKey(), cancelled::get, this::progress); LocalTranscriber.check(cancelled::get);
+                    String summary = DeepSeekClient.summarize(text, new Vault(this).aiKey(), cancelled::get, this::progress, CategoryStore.template(this, recording)); LocalTranscriber.check(cancelled::get);
                     doc.put("summary", summary).put("summaryModel", DeepSeekClient.MODEL).put("summaryAt", System.currentTimeMillis()); TextStore.save(this, doc);
                 }
                 state = TRANSCRIBE.equals(action) ? "文字提取完成，已加密保存" : SUMMARY.equals(action) ? "AI 总结完成，已加密保存" : "离线模型已准备好";

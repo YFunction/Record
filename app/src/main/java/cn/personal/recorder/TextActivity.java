@@ -27,6 +27,8 @@ public final class TextActivity extends Activity {
     private TextView status, transcript, summary;
     private Button extract, summarize;
     private boolean loading, changing;
+    private boolean categoryAiAllowed;
+    private String categoryName = "未分类";
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -34,9 +36,10 @@ public final class TextActivity extends Activity {
     };
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved); session = getIntent().getStringExtra("session"); if (!TextStore.validSession(session)) { finish(); return; }
+        refreshCategoryPolicy();
         ui = new Ui(this); LinearLayout root = ui.screen(); LinearLayout heading = ui.row(); heading.addView(ui.button("返回", this::finish, false));
         TextView title = ui.title("文字与总结", 24); title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title); root.addView(heading);
-        root.addView(ui.label("本地识别发言人 · AI 仅接收转写文字", 13, ui.muted));
+        root.addView(ui.label("分类：" + categoryName + " · 本地识别发言人 · AI 仅接收转写文字", 13, ui.muted));
         LinearLayout actions = ui.card(root); status = ui.label("读取加密记录…", 13, ui.muted); actions.addView(status);
         extract = ui.button("本地提取文字", this::extract, true); actions.addView(extract, ui.spaced());
         summarize = ui.button("生成 AI 总结", this::summarize, false); actions.addView(summarize, ui.spaced());
@@ -50,14 +53,15 @@ public final class TextActivity extends Activity {
         LinearLayout notes = ui.card(root); notes.addView(ui.title("AI 总结", 18)); summary = ui.label("尚未生成总结", 15, ui.ink); summary.setTextIsSelectable(true); notes.addView(summary);
         root.addView(ui.button("导出文字与总结", this::export, false), ui.spaced()); update();
     }
-    @Override protected void onResume() { super.onResume(); handler.removeCallbacks(refresh); handler.post(refresh); }
+    @Override protected void onResume() { super.onResume(); refreshCategoryPolicy(); handler.removeCallbacks(refresh); handler.post(refresh); }
     @Override protected void onPause() { handler.removeCallbacks(refresh); super.onPause(); }
     @Override protected void onDestroy() { io.shutdown(); super.onDestroy(); }
     private void update() {
-        boolean busy = AnalysisService.busy || changing || loading; extract.setEnabled(!busy && !RecordingService.active); summarize.setEnabled(!busy && document != null);
+        boolean busy = AnalysisService.busy || changing || loading; boolean aiAllowed = categoryAiAllowed;
+        extract.setEnabled(!busy && !RecordingService.active); summarize.setEnabled(!busy && document != null && aiAllowed);
         extract.setAlpha(extract.isEnabled() ? 1f : 0.45f); summarize.setAlpha(summarize.isEnabled() ? 1f : 0.45f);
         if (AnalysisService.busy) status.setText(AnalysisService.session.isEmpty() || session.equals(AnalysisService.session) ? AnalysisService.state : "正在处理另一场录音");
-        else status.setText(!AnalysisService.state.isEmpty() && (session.equals(AnalysisService.session) || AnalysisService.session.isEmpty()) ? AnalysisService.state : "文字与总结在手机加密保存，按云端设置同步");
+        else status.setText(!aiAllowed ? "本分类禁止向外部 AI 发送文字 · 可在设置 → 分类管理中更改" : (!AnalysisService.state.isEmpty() && (session.equals(AnalysisService.session) || AnalysisService.session.isEmpty()) ? AnalysisService.state : "文字与总结在手机加密保存，按云端设置同步"));
         File file = TextStore.latest(this, session); String name = file == null ? "none" : file.getName();
         if (!loading && !changing && !name.equals(revision) && !io.isShutdown()) {
             loading = true; io.execute(() -> {
@@ -65,6 +69,9 @@ public final class TextActivity extends Activity {
                 catch (Exception e) { handler.post(() -> { loading = false; revision = name; toast("无法解密文字记录，请检查密钥和文件"); }); }
             });
         }
+    }
+    private void refreshCategoryPolicy() {
+        categoryName = CategoryStore.name(this, CategoryStore.categoryFor(this, session)); categoryAiAllowed = CategoryStore.aiAllowed(this, session);
     }
     private void display() {
         try {
@@ -96,11 +103,12 @@ public final class TextActivity extends Activity {
     }
     private void summarize() {
         if (!editable() || document == null) return;
+        if (!CategoryStore.aiAllowed(this, session)) { toast("本分类未允许 DeepSeek 读取文字；可在设置 → 分类管理中明确开启"); startActivity(new Intent(this, CategoryActivity.class)); return; }
         if (!new Vault(this).aiConfigured()) { toast("请先在设置中填写 DeepSeek Key"); startActivity(new Intent(this, SettingsActivity.class)); return; }
         int parts;
         try { parts = Transcript.parts(Transcript.text(document), 20000).size(); } catch (Exception e) { toast("请先提取有效的录音文字"); return; }
         new AlertDialog.Builder(this).setTitle("发送文字并生成总结")
-            .setMessage("仅向 DeepSeek V4.1 Flash 发送本场转写文字、发言人标注和时间，不上传音频或录音密钥。HTTPS 加密传输，但服务商会读取文字用于总结；请求按你的 DeepSeek 账户计费。\n\n本场约 " + parts + " 段输入，长文本还会发起合并请求。结果在手机加密保存，按云端设置同步。")
+            .setMessage("当前分类：" + CategoryStore.name(this, CategoryStore.categoryFor(this, session)) + "。仅向 DeepSeek V4.1 Flash 发送本场转写文字、发言人标注和时间，不上传音频或录音密钥。HTTPS 加密传输，但服务商会读取文字用于总结；请求按你的 DeepSeek 账户计费。\n\n本场约 " + parts + " 段输入，长文本还会发起合并请求。结果在手机加密保存，按云端设置同步。")
             .setNegativeButton("取消", null).setPositiveButton("生成总结", (d, w) -> start(AnalysisService.SUMMARY)).show();
     }
     private void rename() {

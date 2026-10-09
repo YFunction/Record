@@ -54,6 +54,10 @@ public final class SettingsActivity extends Activity {
             enabled -> vault.preferences().edit().putBoolean("ready", enabled).apply());
         recording.addView(ui.label("约每 30 秒加密保存，停止时保存尾段。", 12, ui.muted));
 
+        LinearLayout organization = ui.card(root); organization.addView(ui.title("分类与整理", 17));
+        ui.action(organization, "录音分类", "设置快速录音默认分类、模板与 AI 文字权限", () -> startActivity(new Intent(this, CategoryActivity.class)));
+        organization.addView(ui.label("历史录音默认归入“未分类”；分类目录与每场录音的归属均加密同步。", 12, ui.muted));
+
         LinearLayout network = ui.card(root); network.addView(ui.title("保存与同步", 17));
         cloud = toggle(network, "云端同步", "关闭后仅保存在手机，开启后补传本地片段", vault.cloudEnabled(), enabled -> {
             if (!editable()) { rebuildLater(); return; }
@@ -92,7 +96,7 @@ public final class SettingsActivity extends Activity {
         ui.action(ai, "离线文字与发言人模型", modelsReady ? "已安装 · 可离线提取" : "首次需下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0), this::speechModels);
         ui.action(ai, "开源模型与许可", "SenseVoiceSmall、pyannote、3D-Speaker", this::modelNotices);
         ui.action(ai, "DeepSeek Key", vault.aiConfigured() ? "已加密保存 · 点击修改" : "由你提供，仅用于文字总结", this::configureAi);
-        ai.addView(ui.label("V4.1 Flash · 本地转写，AI 仅接收文字。HTTPS 保护传输，服务商会读取文字用于总结。", 12, ui.muted));
+        ai.addView(ui.label("V4.1 Flash · 本地转写。生成总结前需本分类已允许 AI，并由你逐场确认；仅发送文字，服务商会读取内容。", 12, ui.muted));
         ui.action(ai, "清除 DeepSeek Key", "不影响录音、文字和已有总结", () -> {
             if (AnalysisService.busy) { toast("请先结束当前文字处理"); return; }
             new AlertDialog.Builder(this).setTitle("清除手机上的 Key？").setNegativeButton("取消", null).setPositiveButton("清除", (d, w) -> { vault.removeAiKey(); buildScreen(); }).show();
@@ -127,10 +131,10 @@ public final class SettingsActivity extends Activity {
         if (refreshing || io.isShutdown()) return; refreshing = true;
         io.execute(() -> {
             try {
-                long bytes = ChunkStore.bytes(this); int count = ChunkStore.pending(this) + TextStore.pending(this);
+                long bytes = ChunkStore.bytes(this); int count = ChunkStore.pending(this) + TextStore.pending(this) + (CategoryStore.hasPending(this) ? 1 : 0);
                 handler.post(() -> { refreshing = false; if (isDestroyed()) return;
                     storage.setText(String.format(Locale.CHINA, "本地 %.1f / 256 MB", bytes / 1048576.0)); capacity.setProgress((int) (bytes / 1048576));
-                    pending.setText(!vault.cloudEnabled() ? "仅本地保存" : (!vault.configured() ? "服务器配置与密钥备份完成后开始同步" : "待同步 " + count + " 份 · " + Uploader.status));
+                    pending.setText(!vault.cloudEnabled() ? "仅本地保存" : (!vault.configured() ? "服务器配置与密钥备份完成后开始同步" : "待同步 " + count + " 项 · " + Uploader.status));
                 });
             } catch (Exception e) { handler.post(() -> refreshing = false); }
         });

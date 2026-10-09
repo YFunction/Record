@@ -40,7 +40,7 @@ public final class UploadWorker extends Worker {
         if (!new Vault(getApplicationContext()).configured()) return Result.success();
         try {
             Uploader.drain(getApplicationContext(), () -> isStopped(), 60_000);
-            return ChunkStore.pending(getApplicationContext()) + TextStore.pending(getApplicationContext()) == 0 ? Result.success() : Result.retry();
+            return ChunkStore.pending(getApplicationContext()) + TextStore.pending(getApplicationContext()) == 0 && !CategoryStore.hasPending(getApplicationContext()) ? Result.success() : Result.retry();
         } catch (Exception e) { return Result.retry(); }
     }
 }

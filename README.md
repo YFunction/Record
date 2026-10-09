@@ -1,4 +1,4 @@
-# 加密录音：荣耀 400 Pro 验证版 v0.5.0
+# 加密录音：荣耀 400 Pro 验证版 v0.6.0
 
 目标设备：荣耀 400 Pro / MagicOS 10.0 / Android 16。将系统的电源键双按快捷启动设置为“加密录音”。首次点击开始并授予麦克风权限后即可本地录音，无需服务器配置。随后每次进入默认自动开始录音，可在设置中关闭；重复进入不会创建第二份录音。
 
@@ -32,10 +32,12 @@
 - **仅本地**：不开启上传，不需要 Tailscale 或服务器令牌；音频仍按约 30 秒切片并加密。关闭云端同步会取消后台补传；已在发送的请求可能完成。切换为云端后会补传全部未确认的本地片段，包括此前仅本地录制的片段。
 - **本地 + 云端**：填写 HTTPS 根地址和令牌，或在云端设置中选择“导入服务器连接配置”。配置文件为 JSON，字段为 `server` 和 `token`；文件包含访问凭据，请通过你控制的方式传到手机，不要提交 Git 或公开分享。配置保存后导出恢复密钥，才会开始上传。
 - **最近录音**：点击录音选择播放、导出 AAC 或删除本地副本。列表时间是首片本地保存时间，完整时长在解密播放时显示。播放只在内存中保留一个已认证的明文片段，关闭页面即停止；没有明文临时录音文件。
+- **分类与整理**：设置 → 分类与整理可管理“隐私录音、会议记录、课堂记录、访谈调研、未分类”和自定义分类，设置快速录音默认分类、纪要模板及分类级 DeepSeek 权限。升级前的录音显示为“未分类”，不会改写原录音；最近录音可筛选、重新归类。分类名称、模板、AI 权限及录音归属均加密后保存在手机并同步。
+- **AI 隐私控制**：所有分类默认禁止外部 AI。用户可逐类开启；生成总结仍需在单条录音页面确认。禁用后不会再为该分类发起新请求，已经生成的总结仍可查看。模板包括会议、课堂、访谈、隐私备忘和通用格式。
 - **导出 AAC**：导出文件是明文，使用系统文件选择器自行选择保存位置。连续但缺少结束标记的意外中断录音可导出已保存部分；中间缺段或认证失败会拒绝导出。导出失败可能留下部分目标文件，请自行删除并重试。
 - **删除/清理**：删除本地录音不会删除云端副本；清理已上传片段可能让本地会话不完整，需要从云端下载完整密文后在电脑恢复。所有删除均需在手机确认。
 
-设置包含录音、保存与同步、密钥与存储、文字与 AI、应用。普通页面允许截图，输入令牌和密钥仍使用密码输入框。升级会保留原密钥、录音和云端配置。
+设置包含录音、分类与整理、保存与同步、密钥与存储、文字与 AI、应用。普通页面允许截图，输入令牌和密钥仍使用密码输入框。升级会保留原密钥、录音和云端配置。
 
 ## 提取文字、区分发言人与 AI 总结
 
@@ -147,7 +149,7 @@ sudo bash deploy/install.sh --https-port 8443
 
 ### 云端保存位置
 
-默认密文文件位于 `/var/lib/recorder/chunks/`，索引位于 `/var/lib/recorder/index.sqlite3`（运行时可能伴随 `-wal`、`-shm`）。服务代码在 `/opt/recorder/server/server.py`，服务配置在 `/etc/recorder.env`，默认总额度 10 GiB。数据位置可通过 `RECORDER_DATA` 调整。
+默认音频密文位于 `/var/lib/recorder/chunks/`，文字密文位于 `/var/lib/recorder/texts/chunks/`，加密分类目录是固定文件 `/var/lib/recorder/category-catalog.enc`；音频索引位于 `/var/lib/recorder/index.sqlite3`（运行时可能伴随 `-wal`、`-shm`）。服务代码在 `/opt/recorder/server/server.py`，服务配置在 `/etc/recorder.env`，默认音频额度 10 GiB。数据位置可通过 `RECORDER_DATA` 调整。分类文件只含 AES-GCM 密文，服务器看不到分类名称、模板、AI 权限或录音归属。
 
 检查服务：`sudo systemctl status recorder`；检查入口：`sudo tailscale serve status`。浏览器打开 HTTPS 根地址加 `/v1/chunks`，没有令牌时应返回 `{"error":"unauthorized"}`，说明网络入口已可达。应用填写根地址，不加 `/v1/chunks`。
 
@@ -161,7 +163,7 @@ Serve 入口受 tailnet 访问控制限制。服务保持 `RECORDER_BIND=127.0.0
 
 ## Git 版本管理
 
-仓库：[YFunction/Record](https://github.com/YFunction/Record)。`main` 为当前验证版；`v0.1.0` 保留初始验证项目，`v0.2.0` 对应 30 秒切片和 Tailscale Serve 部署，`v0.3.0` 增加本地录音、播放和导出；`v0.4.0` 增加独立设置、浅色/深色适配、锁屏启动调整及一条命令部署。各版变化记录在 `CHANGELOG.md`。
+仓库：[YFunction/Record](https://github.com/YFunction/Record)。`main` 为当前验证版；`v0.1.0` 保留初始验证项目，`v0.2.0` 对应 30 秒切片和 Tailscale Serve 部署，`v0.3.0` 增加本地录音、播放和导出，`v0.4.0` 增加独立设置、浅色/深色适配与一条命令部署，`v0.5.0` 增加离线转写和 AI 文字总结；当前工作区正在实现 v0.6.0 分类与资料整理。各版变化记录在 `CHANGELOG.md`。
 
 源码、Gradle Wrapper、存储服务、测试和部署说明纳入 Git。恢复密钥、令牌配置、录音/密文、数据库、签名材料、APK 和构建缓存由 `.gitignore` 排除。发布版本签名密钥需要自己长期保管。
 
@@ -197,7 +199,7 @@ python tools/recover.py decrypt --key-file /你安全保存的位置/recorder-re
 
 解密后：`EAA1`（4 字节）+ JSON 长度（4 字节大端）+ 元信息 JSON + AAC ADTS 字节。JSON 含版本、会话、序号、开始时间、编码参数、样本数量及 `final`。结束标记的 `final=true` 且音频为空；服务器仅能校验外层结构和密文哈希，不能验证音频内容。
 
-API：`PUT /v1/chunks/{name}`、`GET /v1/chunks?after={cursor}`、`GET /v1/chunks/{name}`。均需要 `Authorization: Bearer <token>`。上传还需 `X-Content-SHA256` 和 Content-Length；每片段上限 2 MiB。成功确认包含 `stored`、`name`、`sha256`、`size`。
+API：`PUT /v1/chunks/{name}`、`GET /v1/chunks?after={cursor}`、`GET /v1/chunks/{name}`；文字使用 `/v1/documents` 接口；加密分类目录使用固定槽位 `PUT/GET /v1/category-catalog`，每次更新覆盖服务器上的单个密文文件。均需要 `Authorization: Bearer <token>`。上传还需 `X-Content-SHA256` 和 Content-Length；音频片段上限 2 MiB，分类密文上限 1 MiB。成功上传确认包含 `stored`、`name`、`sha256`、`size`。
 
 ## 官方参考
 

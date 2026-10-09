@@ -23,7 +23,10 @@ final class AacRecorder {
     private final ByteArrayOutputStream chunk = new ByteArrayOutputStream();
     private volatile boolean stop;
     private int sequence, chunkSamples;
-    AacRecorder(Context c) throws Exception { context = c; key = new Vault(c).recordingKey(); }
+    AacRecorder(Context c, String categoryId) throws Exception {
+        context = c; key = new Vault(c).recordingKey();
+        CategoryStore.assign(c, session, categoryId == null ? CategoryStore.defaultId(c) : categoryId);
+    }
     void stop() { stop = true; }
     void run(Runnable onChunk, Runnable onStarted) throws Exception {
         if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED)

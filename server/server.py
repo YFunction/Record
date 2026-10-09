@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9]{8}\.enc\Z")
 DOCUMENT_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.enc\Z")
 MAX_CHUNK = 2 * 1024 * 1024
+MAX_CATALOG = 1024 * 1024
 
 
 class StoreError(Exception):
@@ -133,8 +134,45 @@ class Server(ThreadingHTTPServer):
     def __init__(self, address, store: Store, token: str):
         self.store, self.token = store, token
         self.documents = Store(store.root / "texts", int(os.environ.get("RECORDER_TEXT_QUOTA_BYTES", str(256 * 1024**2))), DOCUMENT_NAME, b"ET01")
+        self.catalog_path = store.root / "category-catalog.enc"
+        self.catalog_lock = threading.RLock()
         self.slots = threading.BoundedSemaphore(16)
         super().__init__(address, Handler)
+
+    def put_catalog(self, payload: bytes, claimed: str) -> tuple[int, dict]:
+        if not 32 <= len(payload) <= MAX_CATALOG or payload[:4] != b"CC01":
+            raise StoreError(400, "invalid category catalog envelope")
+        digest = hashlib.sha256(payload).hexdigest()
+        if not hmac.compare_digest(digest, claimed):
+            raise StoreError(422, "checksum mismatch")
+        with self.catalog_lock:
+            if self.catalog_path.is_file():
+                existing = self.catalog_path.read_bytes()
+                if existing == payload:
+                    return 200, Store.receipt("category-catalog", digest, len(payload))
+            if shutil.disk_usage(self.store.root).free < len(payload) + 16 * 1024 * 1024:
+                raise StoreError(507, "disk space low")
+            fd, temp = tempfile.mkstemp(prefix=".catalog-", dir=self.store.root)
+            try:
+                with os.fdopen(fd, "wb") as output:
+                    output.write(payload)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temp, self.catalog_path)
+                sync_directory(self.store.root)
+            finally:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+        return 201, Store.receipt("category-catalog", digest, len(payload))
+
+    def get_catalog(self) -> tuple[bytes, str]:
+        with self.catalog_lock:
+            if not self.catalog_path.is_file():
+                raise StoreError(404, "not found")
+            payload = self.catalog_path.read_bytes()
+            if not 32 <= len(payload) <= MAX_CATALOG or payload[:4] != b"CC01":
+                raise StoreError(503, "stored catalog needs administrator repair")
+            return payload, hashlib.sha256(payload).hexdigest()
 
     def server_close(self):
         super().server_close()
@@ -188,6 +226,24 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorized():
                 raise StoreError(401, "unauthorized")
             path = urlsplit(self.path)
+            if path.path == "/v1/category-catalog":
+                if path.query or self.headers.get("Transfer-Encoding") is not None:
+                    raise StoreError(400, "content length required")
+                lengths = self.headers.get_all("Content-Length", [])
+                if len(lengths) != 1 or not lengths[0].isdigit():
+                    raise StoreError(411, "content length required")
+                size = int(lengths[0])
+                if not 32 <= size <= MAX_CATALOG:
+                    raise StoreError(413, "invalid category catalog size")
+                digest = self.headers.get("X-Content-SHA256", "")
+                if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise StoreError(400, "checksum required")
+                payload = self.rfile.read(size)
+                if len(payload) != size:
+                    raise StoreError(400, "incomplete body")
+                code, body = self.server.put_catalog(payload, digest)
+                self.respond(code, body)
+                return
             documents = path.path.startswith("/v1/documents/")
             prefix = "/v1/documents/" if documents else "/v1/chunks/"
             store = self.server.documents if documents else self.server.store
@@ -222,6 +278,18 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorized():
                 raise StoreError(401, "unauthorized")
             path = urlsplit(self.path)
+            if path.path == "/v1/category-catalog":
+                if path.query:
+                    raise StoreError(400, "invalid query")
+                payload, digest = self.server.get_catalog()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("X-Content-SHA256", digest)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             documents = path.path == "/v1/documents" or path.path.startswith("/v1/documents/")
             prefix = "/v1/documents" if documents else "/v1/chunks"
             store = self.server.documents if documents else self.server.store

@@ -11,31 +11,36 @@ import java.util.Map;
 final class RecordingLibrary {
     static final class Entry {
         final String id;
+        final String categoryId;
+        final String categoryName;
         final File[] chunks;
         final long time, bytes;
         final int uploaded;
-        Entry(String id, List<File> files) {
-            this(id, files, 0);
+        Entry(String id, String categoryId, String categoryName, List<File> files) {
+            this(id, categoryId, categoryName, files, 0);
         }
-        Entry(String id, List<File> files, long textTime) {
+        Entry(String id, String categoryId, String categoryName, List<File> files, long textTime) {
             this.id = id; chunks = files.toArray(new File[0]);
+            this.categoryId = categoryId; this.categoryName = categoryName;
             long total = 0; int ack = 0;
             for (File file : chunks) { total += file.length(); if (ChunkStore.uploaded(file)) ack++; }
             bytes = total; uploaded = ack; time = chunks.length == 0 ? textTime : chunks[0].lastModified();
         }
     }
     static List<Entry> list(Context context) {
+        CategoryStore.State catalog;
+        try { catalog = CategoryStore.load(context); } catch (Exception e) { throw new IllegalStateException("无法读取加密分类目录", e); }
         Map<String, List<File>> sessions = new LinkedHashMap<>();
         for (File f : ChunkStore.files(context)) {
             if (!f.getName().matches("[0-9a-f-]{36}_[0-9]{8}\\.enc")) continue;
             sessions.computeIfAbsent(f.getName().substring(0, 36), k -> new ArrayList<>()).add(f);
         }
         List<Entry> entries = new ArrayList<>();
-        for (Map.Entry<String, List<File>> e : sessions.entrySet()) entries.add(new Entry(e.getKey(), e.getValue()));
+        for (Map.Entry<String, List<File>> e : sessions.entrySet()) { String category = catalog.assigned(e.getKey()); entries.add(new Entry(e.getKey(), category, catalog.name(category), e.getValue())); }
         for (File file : TextStore.files(context)) {
             String id = file.getName().substring(0, 36);
             File latest = TextStore.latest(context, id);
-            if (!sessions.containsKey(id) && latest != null) { sessions.put(id, new ArrayList<>()); entries.add(new Entry(id, new ArrayList<>(), latest.lastModified())); }
+            if (!sessions.containsKey(id) && latest != null) { sessions.put(id, new ArrayList<>()); String category = catalog.assigned(id); entries.add(new Entry(id, category, catalog.name(category), new ArrayList<>(), latest.lastModified())); }
         }
         entries.sort(Comparator.comparingLong((Entry e) -> e.time).reversed());
         return entries;
