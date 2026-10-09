@@ -18,6 +18,7 @@ import javax.crypto.spec.SecretKeySpec;
 /** Only the wrapping key is non-exportable. The recording key has an offline backup. */
 final class Vault {
     private static final String ALIAS = "recorder.wrap.v1";
+    private static final Object KEY_LOCK = new Object();
     private final SharedPreferences prefs;
     Vault(Context context) { prefs = context.getSharedPreferences("vault", Context.MODE_PRIVATE); }
     private SecretKey wrappingKey() throws Exception {
@@ -52,14 +53,16 @@ final class Vault {
         c.updateAAD(name.getBytes(StandardCharsets.UTF_8));
         return c.doFinal(blob, 12, blob.length - 12);
     }
-    synchronized void initialize(String restore) throws Exception {
-        if (prefs.contains("recording-key")) return;
-        byte[] key;
-        if (restore.trim().isEmpty()) { key = new byte[32]; new SecureRandom().nextBytes(key); }
-        else { key = Base64.decode(restore.trim(), Base64.DEFAULT); }
-        if (key.length != 32) throw new IllegalArgumentException("恢复密钥必须为 Base64 编码的 32 字节密钥");
-        try { saveSecret("recording-key", key); }
-        finally { Arrays.fill(key, (byte) 0); }
+    void initialize(String restore) throws Exception {
+        synchronized (KEY_LOCK) {
+            if (prefs.contains("recording-key")) return;
+            byte[] key;
+            if (restore.trim().isEmpty()) { key = new byte[32]; new SecureRandom().nextBytes(key); }
+            else { key = Base64.decode(restore.trim(), Base64.DEFAULT); }
+            if (key.length != 32) throw new IllegalArgumentException("恢复密钥必须为 Base64 编码的 32 字节密钥");
+            try { saveSecret("recording-key", key); }
+            finally { Arrays.fill(key, (byte) 0); }
+        }
     }
     String recoveryKey() throws Exception { return Base64.encodeToString(loadSecret("recording-key"), Base64.NO_WRAP); }
     SecretKey recordingKey() throws Exception {

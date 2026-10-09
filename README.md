@@ -1,4 +1,4 @@
-# 加密录音：荣耀 400 Pro 验证版 v0.3.0
+# 加密录音：荣耀 400 Pro 验证版 v0.4.0
 
 目标设备：荣耀 400 Pro / MagicOS 10.0 / Android 16。将系统的电源键双按快捷启动设置为“加密录音”。首次点击开始并授予麦克风权限后即可本地录音，无需服务器配置。随后每次进入默认自动开始录音，可在设置中关闭；重复进入不会创建第二份录音。
 
@@ -19,7 +19,7 @@
 
 1. 首次安装无法跳过系统麦克风授权。首页默认“仅本地”，首次开始时自动生成密钥。备份密钥不阻止本地录音，但必须尽早备份；未备份且卸载/清除数据会失去解密能力。云端同步仍需服务器配置与成功导出密钥。
 2. 应用在可见界面中启动 `microphone` 前台服务，随后支持后台/熄屏继续录音。录音时保留系统麦克风使用提示和前台服务通知；可在通知栏停止。
-3. 应用请求在锁屏上显示启动界面，并在界面恢复可见后启动录音。电源键双按的映射由 MagicOS 设置完成，应用不拦截电源键。是否能在你的锁屏设置下直接开始，必须真机验证。
+3. 应用在清单与运行时请求锁屏显示和唤醒屏幕，等待录音界面恢复并获得窗口焦点后启动服务，不主动要求解锁。电源键双按映射由 MagicOS 设置完成，应用不拦截电源键。若系统要求先解锁才能交付启动请求，应用无法单独改变这项系统行为；必须真机验证。重启后第一次解锁前，加密配置尚不可用。
 4. 不承诺绕过 MagicOS 的进程回收。强行停止应用、重启手机、撤销权限、关闭麦克风访问或其他应用抢占麦克风，可能停止录音。重启后不会自动开始新录音，须再次双按/打开。
 5. 普通麦克风录音不等于通话录音。来电/接听、蓝牙和其他音频应用的影响需要真机测试。
 6. 若进程意外终止，已完成并落盘的片段保留；当前尚未完成的片段和编码器缓存可能丢失，通常为最近不足约 30 秒的音频。正常停止会保存尾段。
@@ -27,7 +27,7 @@
 
 ## 手机端使用
 
-首页包含录音计时、开始/停止按钮、保存方式、存储用量和最近录音。录音期间不可修改保存方式和密钥。锁屏界面可以开始/停止录音，访问历史录音、密钥和设置需要解锁。
+首页仅保留录音计时、开始/停止、保存状态和最近录音；其他选项统一收进右上角“设置”。首页、设置页和弹窗跟随系统浅色/深色模式。录音期间不可修改保存方式和密钥。锁屏界面可以开始/停止录音，访问历史录音、密钥和设置需要解锁。
 
 - **仅本地**：不开启上传，不需要 Tailscale 或服务器令牌；音频仍按约 30 秒切片并加密。关闭云端同步会取消后台补传；已在发送的请求可能完成。切换为云端后会补传全部未确认的本地片段，包括此前仅本地录制的片段。
 - **本地 + 云端**：填写 HTTPS 根地址和令牌，或在云端设置中选择“导入服务器连接配置”。配置文件为 JSON，字段为 `server` 和 `token`；文件包含访问凭据，请通过你控制的方式传到手机，不要提交 Git 或公开分享。配置保存后导出恢复密钥，才会开始上传。
@@ -35,7 +35,9 @@
 - **导出 AAC**：导出文件是明文，使用系统文件选择器自行选择保存位置。连续但缺少结束标记的意外中断录音可导出已保存部分；中间缺段或认证失败会拒绝导出。导出失败可能留下部分目标文件，请自行删除并重试。
 - **删除/清理**：删除本地录音不会删除云端副本；清理已上传片段可能让本地会话不完整，需要从云端下载完整密文后在电脑恢复。所有删除均需在手机确认。
 
-设置中可关闭打开自动录音、导出恢复密钥、在首次初始化前导入已有密钥、补传、清理副本和打开系统权限/电池设置。升级会保留原密钥、录音和云端配置。
+设置分为录音、保存与同步、密钥与存储、应用四组，包含自动录音、服务器连接/配置导入、补传、密钥备份/首次导入、存储清理、权限与后台运行。普通页面允许截图，输入令牌和密钥仍使用密码输入框。升级会保留原密钥、录音和云端配置。
+
+锁屏双按仍要求解锁时，先观察有没有出现录音首页：如果只有系统解锁页面，可能是 MagicOS 尚未向应用交付启动请求；如果首页出现但录音失败，进入设置 → 锁屏启动排查 → 导出诊断。诊断仅记录最近启动事件、窗口焦点、锁屏状态和权限，不含令牌、密钥或音频内容。`FLAG_SECURE` 只影响截图和非安全显示，与锁屏启动限制不同。
 
 ## 密钥与恢复
 
@@ -89,31 +91,37 @@ Windows 通常能通过 `localhost:8080` 访问 WSL 服务；若本机网络配�
 
 `deploy/recorder.service` 提供 systemd 示例。服务器需要 Python 3.10+，以及已登录同一 tailnet 的 Tailscale。通过 Tailscale Serve 将本机 Python 服务发布到 tailnet 内，手机使用稳定的完整 `*.ts.net` HTTPS 地址访问。应用配置不需要使用服务器的公网 IP。
 
-### 安装存储服务
+### 一条命令安装
 
-在服务器的仓库根目录执行 `sudo bash deploy/install.sh` 可安装 systemd 服务、创建服务用户并生成随机令牌。脚本保留已有 `/etc/recorder.env` 和数据，更新服务代码后会重启服务。首次部署前请确保本机 8080 端口没有被其他服务占用。随后按下面步骤配置 Serve。
-
-将 `server/` 放到 `/opt/recorder/server/`：
-
-1. 创建无交互登录的 `recorder` 服务用户，将 `/var/lib/recorder` 的所有者设为该用户，权限设为 700。
-2. 复制 `deploy/recorder.env.example` 到 `/etc/recorder.env`，替换随机令牌，权限设为 600；保持绑定 `127.0.0.1`，默认云端额度 10 GiB。
-3. 将 `deploy/recorder.service` 安装到 `/etc/systemd/system/`，执行 `systemctl daemon-reload` 和 `systemctl enable --now recorder`。
-4. 在 Tailscale 管理控制台的 DNS 页面启用 MagicDNS 和 HTTPS Certificates。首次启用证书时会提示节点完整域名将出现在证书透明度日志中；节点名应使用普通名称，例如 `recorder`。
-5. 检查该节点现有 Serve 配置后，启用代理并获取实际 HTTPS 地址：
+前提：Ubuntu 已安装 Python 3.10+、Git、Tailscale，服务器和手机登录同一 tailnet，并已在 Tailscale DNS 设置中启用 MagicDNS 与 HTTPS Certificates。首次启用证书需要在管理控制台确认，节点域名会出现在证书透明度日志中。此配置不需要启用 Funnel。
 
 ```bash
-sudo tailscale serve status
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
-sudo tailscale serve status
+git clone https://github.com/YFunction/Record.git
+cd Record
+sudo bash deploy/install.sh
 ```
 
-如果现有 Serve 已使用该端口/根路径承载其他服务，请选择空闲端口，例如 `--https=8443`，应用地址相应包含 `:8443`。使用命令实际显示的地址，例如 `https://recorder.your-tailnet.ts.net`；这个示例不是你的真实地址。
+安装命令自动检查端口冲突、建立服务用户、安装/重启 systemd 服务、生成首次令牌、配置私有 Serve HTTPS、验证鉴权，并在执行 sudo 的用户家目录生成 `record-server-config.json`。文件权限为 600，内容只有 `server` 和 `token`，不包含录音恢复密钥。
 
-6. 将手机的 Tailscale 连接到同一 tailnet，确保访问规则允许手机访问服务器 HTTPS 端口。先用手机浏览器打开该地址的 `/v1/chunks`；未附上传令牌时收到 `{"error":"unauthorized"}` 是预期响应，表明网络和 HTTPS 已连通。证书错误、DNS 错误或超时需要先解决。
-7. 在录音应用填写 HTTPS 根地址和云端上传令牌。地址末尾不要添加 `/v1/chunks`。修改设置前先停止录音；新地址也会用于补传已有本地片段。
-8. 定期监控磁盘和备份 `/var/lib/recorder`。最简单的一致备份方法是短暂停止服务后复制整个目录，再启动；不应只复制正在写入的 SQLite 主文件而忽略 WAL 和录音文件。
+将配置文件私下传到手机，在应用“设置 → 导入连接配置”选择它，再单独备份恢复密钥即可同步。不要公开分享配置文件或提交到 Git。手机需保持 Tailscale 已连接，访问规则允许连接服务器 HTTPS 端口。
 
-Serve 入口受 tailnet 的访问控制限制。保持 `RECORDER_BIND=127.0.0.1`，通过 Serve 的私有 HTTPS 入口访问，不配置公网端口映射。本项目部署方式不使用 Funnel。HTTPS证书和代理由 Tailscale Serve 管理；存储 API 仍要求独立上传令牌。
+重复运行同一安装命令会更新服务器代码并重启服务，保留 `/etc/recorder.env` 的令牌及已有密文。已有仓库可先运行 `git pull --ff-only` 再安装。如果 443 根路径已有其他服务，脚本会在修改前退出；可选择空闲端口：
+
+```bash
+sudo bash deploy/install.sh --https-port 8443
+```
+
+仅安装/更新存储服务而由自己配置代理时，可用 `--no-serve`；该选项跳过 HTTPS 入口配置和手机导入文件生成。脚本不会替你安装或登录 Tailscale。
+
+### 云端保存位置
+
+默认密文文件位于 `/var/lib/recorder/chunks/`，索引位于 `/var/lib/recorder/index.sqlite3`（运行时可能伴随 `-wal`、`-shm`）。服务代码在 `/opt/recorder/server/server.py`，服务配置在 `/etc/recorder.env`，默认总额度 10 GiB。数据位置可通过 `RECORDER_DATA` 调整。
+
+检查服务：`sudo systemctl status recorder`；检查入口：`sudo tailscale serve status`。浏览器打开 HTTPS 根地址加 `/v1/chunks`，没有令牌时应返回 `{"error":"unauthorized"}`，说明网络入口已可达。应用填写根地址，不加 `/v1/chunks`。
+
+定期备份整个数据目录。最简单的一致备份方法是短暂停止服务后复制整个 `/var/lib/recorder`，再启动；不要仅复制正在写入的 SQLite 主文件而忽略 WAL 和密文。
+
+Serve 入口受 tailnet 访问控制限制。服务保持 `RECORDER_BIND=127.0.0.1`，不需要开放公网 8080 或设置端口映射。HTTPS 证书和代理由 Tailscale Serve 管理，存储 API 仍要求独立上传令牌。
 
 手机 Tailscale 断开、VPN 权限被关闭、节点登录到期或 tailnet 策略不允许访问时，上传会失败并保留本地密文。录音应用使用 Android 系统的 VPN 网络，不会替你启动或登录 Tailscale。请在手机的 Tailscale/VPN 与应用电池设置中检查自动连接和后台运行，并实际测试熄屏及 Wi-Fi/移动网络切换。
 
@@ -121,7 +129,7 @@ Serve 入口受 tailnet 的访问控制限制。保持 `RECORDER_BIND=127.0.0.1`
 
 ## Git 版本管理
 
-仓库：[YFunction/Record](https://github.com/YFunction/Record)。`main` 为当前验证版；`v0.1.0` 保留初始验证项目，`v0.2.0` 对应 30 秒切片和 Tailscale Serve 部署，`v0.3.0` 增加新首页与独立本地录音、播放和导出。各版变化记录在 `CHANGELOG.md`。
+仓库：[YFunction/Record](https://github.com/YFunction/Record)。`main` 为当前验证版；`v0.1.0` 保留初始验证项目，`v0.2.0` 对应 30 秒切片和 Tailscale Serve 部署，`v0.3.0` 增加本地录音、播放和导出；`v0.4.0` 增加独立设置、浅色/深色适配、锁屏启动调整及一条命令部署。各版变化记录在 `CHANGELOG.md`。
 
 源码、Gradle Wrapper、存储服务、测试和部署说明纳入 Git。恢复密钥、令牌配置、录音/密文、数据库、签名材料、APK 和构建缓存由 `.gitignore` 排除。发布版本签名密钥需要自己长期保管。
 
@@ -145,7 +153,7 @@ python tools/recover.py decrypt --key-file /你安全保存的位置/recorder-re
 ## 验证清单
 
 - 已完成的电脑协议测试：`python -m unittest discover -s tests -v`。
-- 手机读取逻辑的 JVM 测试：`gradlew testDebugUnitTest`，覆盖跨切片顺序导出/随机读取、篡改、错密钥、缺段、结束标记和本地模式不依赖云端；这是数据与配置测试，不等于真机播放/采集/UI 测试。
+- 手机读取逻辑的 JVM 测试：`gradlew testDebugUnitTest`，覆盖跨切片顺序导出/随机读取、篡改、错密钥、缺段、结束标记和本地模式不依赖云端；另有 Robolectric Android 16 界面测试，覆盖浅色/深色首页与设置、允许截图、锁屏下等待窗口焦点且不请求解锁。模拟测试不等于真机播放、采集或 MagicOS 电源键行为验证。
 - 必须在手机上验证：已解锁双按冷启动；锁屏/熄屏双按冷启动；录音后熄屏至少 30 分钟；约 30 秒首片上传；不足 30 秒停止后的尾段上传；Tailscale 断开后继续本地录音及重连补传；Wi-Fi/移动网络切换；停止后结束标记上传；下载解密并播放；重复双按；来电打断；关闭麦克风访问；低存储空间。
 - 在 MagicOS 的应用电池/启动管理设置中查看允许后台运行的选项，具体名称以手机实际菜单为准；设置后仍需长时间测试。
 
@@ -163,6 +171,8 @@ API：`PUT /v1/chunks/{name}`、`GET /v1/chunks?after={cursor}`、`GET /v1/chunk
 
 - [麦克风前台服务启动限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)
 - [Android 16 后台任务配额变化](https://developer.android.com/develop/background-work/services/fgs/changes)
+- [FLAG_SECURE 与截图限制](https://developer.android.com/security/fraud-prevention/activities)
+- [Activity 锁屏显示与屏幕唤醒](https://developer.android.com/reference/android/app/Activity.html)
 - [Android Keystore](https://developer.android.com/privacy-and-security/keystore)
 - [MediaCodec](https://developer.android.com/reference/android/media/MediaCodec)
 - [Tailscale Serve 命令与私有 HTTPS 代理](https://tailscale.com/docs/reference/tailscale-cli/serve)

@@ -55,16 +55,17 @@ public final class RecordingService extends Service {
                 try {
                     recorder.run(() -> { if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L); },
                         () -> { startedElapsed = android.os.SystemClock.elapsedRealtime();
+                            LaunchDiagnostics.serviceNote(this, "microphone-started");
                             state = "正在录音，音频约每 30 秒加密保存";
                             main.post(() -> getSystemService(NotificationManager.class).notify(1,
                                 notification(new Vault(this).configured() ? "本地加密 · 云端同步" : "本地加密保存")));
                         });
                     state = "录音已停止，密文已保存在本地";
-                } catch (Exception e) { state = "录音已停止：" + e.getMessage(); }
+                } catch (Exception e) { state = "录音已停止：" + e.getMessage(); LaunchDiagnostics.serviceNote(this, "capture-failed:" + e.getClass().getSimpleName()); }
                 finally { main.post(this::finishRecording); }
             }, "audio-capture");
             capture.start();
-        } catch (Exception e) { state = "无法启动录音：请检查权限并重新打开应用"; finishRecording(); }
+        } catch (Exception e) { state = "无法启动录音：请检查权限并重新打开应用"; LaunchDiagnostics.serviceNote(this, "service-failed:" + e.getClass().getSimpleName()); finishRecording(); }
         return START_NOT_STICKY;
     }
     private Notification notification(String detail) {
