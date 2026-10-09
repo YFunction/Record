@@ -99,7 +99,7 @@ public final class MainActivity extends Activity {
     private void configure() {
         if (RecordingService.active) { toast("请先停止录音，再修改设置"); return; }
         LinearLayout form = column();
-        EditText url = input("服务器根地址，例如 https://record.example.com", false);
+        EditText url = input("Tailscale Serve 的 HTTPS 根地址，例如 https://recorder.your-tailnet.ts.net", false);
         url.setText(vault.preferences().getString("server", "")); form.addView(url);
         EditText token = input("上传令牌（留空保留已有令牌）", true); form.addView(token);
         EditText restore = input("已有恢复密钥可在首次初始化时填入；留空生成新密钥", true);

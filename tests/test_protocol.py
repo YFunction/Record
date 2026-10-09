@@ -71,7 +71,9 @@ class ProtocolTests(unittest.TestCase):
             return response.code, response.read()
 
     def test_end_to_end_retry_download_and_offline_recovery(self):
-        audio = b"\xff\xf1example AAC bytes"
+        # A 30-second slice at 64 kbps is about 240 KB. This tests transport and
+        # encryption of that size; real AAC capture/playback still needs a phone.
+        audio = b"\xff\xf1" + secrets.token_bytes(30 * 64000 // 8)
         name, blob = envelope(self.key, audio=audio)
         end, marker = envelope(self.key, index=1, audio=b"", final=True)
         code, receipt = self.request("/v1/chunks/" + name, blob)

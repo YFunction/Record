@@ -15,7 +15,7 @@ import javax.crypto.SecretKey;
 
 /** One continuous capture/encoder; segmentation never restarts the microphone. */
 final class AacRecorder {
-    private static final int RATE = 16000, SAMPLES_PER_CHUNK = RATE * 3;
+    private static final int RATE = 16000, SAMPLES_PER_CHUNK = RATE * 30;
     private final Context context;
     private final SecretKey key;
     private final String session = UUID.randomUUID().toString();

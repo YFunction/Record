@@ -51,7 +51,7 @@ public final class RecordingService extends Service {
             Thread capture = new Thread(() -> {
                 try {
                     recorder.run(() -> { if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L); },
-                        () -> state = "正在录音，音频约每 3 秒加密保存");
+                        () -> state = "正在录音，音频约每 30 秒加密保存");
                     state = "录音已停止，密文已保存在本地";
                 } catch (Exception e) { state = "录音已停止：" + e.getMessage(); }
                 finally { main.post(this::finishRecording); }
