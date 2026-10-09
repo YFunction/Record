@@ -1,0 +1,21 @@
+[Unit]
+Description=Encrypted recording ciphertext store
+After=network.target
+
+[Service]
+User=recorder
+Group=recorder
+WorkingDirectory=/opt/recorder/server
+EnvironmentFile=/etc/recorder.env
+ExecStart=/usr/bin/python3 /opt/recorder/server/server.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/recorder
+
+[Install]
+WantedBy=multi-user.target
