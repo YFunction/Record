@@ -1,4 +1,4 @@
-# 加密录音：荣耀 400 Pro 验证版 v0.4.0
+# 加密录音：荣耀 400 Pro 验证版 v0.5.0
 
 目标设备：荣耀 400 Pro / MagicOS 10.0 / Android 16。将系统的电源键双按快捷启动设置为“加密录音”。首次点击开始并授予麦克风权限后即可本地录音，无需服务器配置。随后每次进入默认自动开始录音，可在设置中关闭；重复进入不会创建第二份录音。
 
@@ -35,13 +35,27 @@
 - **导出 AAC**：导出文件是明文，使用系统文件选择器自行选择保存位置。连续但缺少结束标记的意外中断录音可导出已保存部分；中间缺段或认证失败会拒绝导出。导出失败可能留下部分目标文件，请自行删除并重试。
 - **删除/清理**：删除本地录音不会删除云端副本；清理已上传片段可能让本地会话不完整，需要从云端下载完整密文后在电脑恢复。所有删除均需在手机确认。
 
-设置分为录音、保存与同步、密钥与存储、应用四组，包含自动录音、服务器连接/配置导入、补传、密钥备份/首次导入、存储清理、权限与后台运行。普通页面允许截图，输入令牌和密钥仍使用密码输入框。升级会保留原密钥、录音和云端配置。
+设置包含录音、保存与同步、密钥与存储、文字与 AI、应用。普通页面允许截图，输入令牌和密钥仍使用密码输入框。升级会保留原密钥、录音和云端配置。
+
+## 提取文字、区分发言人与 AI 总结
+
+1. 在设置 → 文字与 AI 下载离线模型，约 **193 MiB**，安装时建议至少有 **700 MB** 可用空间。也可从 [v0.5.0 发布页](https://github.com/YFunction/Record/releases/tag/v0.5.0) 下载 `Record-speech-models-v1.zip`，传到手机后导入。下载与导入均校验包和每个文件的 SHA-256；模型安装到应用私有目录。当前 APK 仅包含 arm64-v8a，适用于荣耀 400 Pro。
+2. 停止录音，点击最近录音 → 文字与 AI 总结 → 本地提取文字。已知发言人数可填 1～20；留空自动估计。使用 SenseVoiceSmall 识别中文等语言，pyannote segmentation-3.0 与 3D-Speaker ERes2Net 区分发言人。模型完整安装后可断网处理；不上传音频给识别或 AI 服务。每 5 分钟在内存解码处理一批，声纹向量仅在本场处理中保留，不保存到文件或上传。
+3. 转写显示时间与“发言人 1、2…”；编号不是身份鉴定。噪声、短句、相近声音、重叠说话和跨批次匹配会产生误分。重叠语音标为待核对，可修改称呼及每段文字。同一人被分为多个编号时可将称呼设为相同名称。长连续语句约每 26 秒识别一次，边界可能影响准确度。结果需人工核对。
+4. 在设置输入自己的 DeepSeek API Key，然后在文字页点击生成总结并确认。使用 [DeepSeek 官方 V4.1 Flash](https://api-docs.deepseek.com/en/)，API 名称为 `deepseek-flash`。仅向固定官方 HTTPS 地址发送转写文字、时间、发言人称呼及总结指令；不发送音频、录音恢复密钥或服务器令牌。Key 作为鉴权凭据发给 DeepSeek，使用 Android Keystore 包装后保存在手机，不传给你的存储服务器。打开文字页、转写和补传均不会自动请求 AI。费用由你的 DeepSeek 账户承担。
+5. 总结包含摘要、各人要点、决定、待办、分歧及待核对事项。长文本分段总结后合并，不静默截掉后半段；超过 30 万字符会提示拆分录音。AI 仍可能遗漏或误解，请核对原文。取消处理保留旧结果，但已经发出的请求仍可能计费。重新转写成功后替换原转写及旧总结；手动修改文字或称呼会清除旧总结，需要重新生成。
+
+**加密边界**：转写与总结使用同一已备份恢复密钥进行 AES-256-GCM 加密，保存在手机 `noBackupFilesDir/texts`；开启云端同步且配置完成后，补传密文到你的服务器。发给 DeepSeek 的文字使用 HTTPS 加密传输，但 DeepSeek 必须读取文字才能总结，这不是对 AI 服务商不可见的端到端加密。只需本地转写时无需提供 Key。录音的密文备份仍按原设置进行；AI 通道只有文字。
+
+文字页及处理通知跟随系统浅色/深色模式。音频副本清理后保留已有文字；重新转写需要完整的本地音频。处理失败、取消、认证失败或响应截断不会覆盖已有成功记录。文字副本本地额度 64 MiB，单份解密文字最多 1 MiB；服务器文字额度默认独立为 256 MiB。当前模型尚未在你的荣耀手机上实测速度、内存占用与准确率；Windows 原生模型测试及 Android 界面测试不代替真机测试。
+
+“导出文字与总结”会生成**明文** TXT，只有手动选择导出时才写入你选定的目录。模型来源、作者及原始许可见设置 → 开源模型与许可，以及 `app/src/main/assets/speech-licenses`；许可随 APK 和模型包分发。
 
 锁屏双按仍要求解锁时，先观察有没有出现录音首页：如果只有系统解锁页面，可能是 MagicOS 尚未向应用交付启动请求；如果首页出现但录音失败，进入设置 → 锁屏启动排查 → 导出诊断。诊断仅记录最近启动事件、窗口焦点、锁屏状态和权限，不含令牌、密钥或音频内容。`FLAG_SECURE` 只影响截图和非安全显示，与锁屏启动限制不同。
 
 ## 密钥与恢复
 
-手机生成随机 32 字节录音密钥，并用 Android Keystore 内的不可导出密钥包装后保存。上传令牌同样包装保存。系统备份关闭，密文文件放在 `noBackupFilesDir`。
+手机生成随机 32 字节录音密钥，并用 Android Keystore 内的不可导出密钥包装后保存。上传令牌和 DeepSeek Key 同样包装保存。该恢复密钥同时用于解密转写及总结。系统备份关闭，密文文件放在 `noBackupFilesDir`。
 
 **恢复密钥导出文件是明文 Base64 密钥。持有它的人可以解密全部录音，请离线保管，不要放到录音云服务器。** 备份文件和云端密文分开保管。首次初始化也可输入已有恢复密钥；完成初始化后不支持直接替换录音密钥。
 
@@ -53,12 +67,30 @@
 
 安装 Android Studio，通过 SDK Manager 安装 Android SDK Platform 36、Build Tools 35.0.0，并使用 JDK 17 或 21。项目使用 AGP 8.13.2、Gradle 8.13、WorkManager 2.11.2。
 
-在 Android Studio 打开此目录，等待同步完成，构建并运行 `app`。如使用命令行：
+先使用 Python 3.10+ 获取固定版本且校验 SHA-256 的官方 sherpa-onnx Android 依赖，再在 Android Studio 打开此目录。模型权重另行下载安装，不包含在源码或 APK 中。如使用命令行：
 
 ```powershell
+python tools/prepare_speech.py
 .\gradlew.bat assembleDebug lintDebug testDebugUnitTest
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
+
+## 云端文字路径与电脑恢复
+
+默认部署音频仍位于 `/var/lib/recorder/chunks/`，索引 `/var/lib/recorder/index.sqlite3`。
+新增文字与总结密文位于 **`/var/lib/recorder/texts/chunks/`**，独立索引 `/var/lib/recorder/texts/index.sqlite3`。自定义 `RECORDER_DATA` 时位于该目录下 `texts/chunks`。服务器不运行语音模型或 DeepSeek，也不持有解密密钥及 DeepSeek Key。更新服务器仍使用已有的一条命令 `sudo bash deploy/install.sh`，保留已有数据、令牌和 Tailscale Serve 入口。
+
+文字使用不可变版本文件 `<录音UUID>_<版本UUID>.enc`。每次修正或生成总结产生新版本；云端保留历史版本。`PUT /v1/documents/<文件名>`、`GET /v1/documents`、`GET /v1/documents/<文件名>` 与音频一样使用 Bearer 令牌、SHA-256、幂等确认、分页列表和不可覆盖约束。密文格式为 `ET01 | 12字节 nonce | AES-GCM 密文及认证标签`，AAD 为 UTF-8 `text-v1:<文件名>`，明文为含 `version=1`、`session`、`updatedAt`、`segments`、`names`、`summary` 的 JSON。录音与文字 AAD 分开，防止混用。
+
+电脑恢复需要单独备份的恢复密钥，令牌交互输入，不写入命令历史：
+
+```bash
+python -m pip install -r tools/requirements.txt
+python tools/text_recover.py download --server https://你的设备.你的tailnet.ts.net --output downloads/texts
+python tools/text_recover.py decrypt --key-file /安全位置/recorder-recovery-key.txt --input downloads/texts --output /安全位置/recovered-texts
+```
+
+恢复工具认证全部文件后才导出，每个版本生成一个明文 JSON。按 `session` 区分录音，同一场以 `updatedAt` 最大的版本为最近保存结果；版本 UUID 的字典顺序不代表时间。已存在的输出拒绝覆盖。导出目录含隐私明文，请自行保管；尚不支持直接在手机恢复云端文字。
 
 调试 APK 只在设置校验层允许 `http://127.0.0.1:端口` 本地测试地址。发布版本只接受 HTTPS；部署到云服务器时使用 HTTPS 地址。发布 APK 请使用自己长期保管的签名密钥，以便后续更新不丢失应用数据。
 

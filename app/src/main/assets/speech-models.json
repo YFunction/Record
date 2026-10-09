@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "url": "https://github.com/YFunction/Record/releases/download/v0.5.0/Record-speech-models-v1.zip",
+  "size": 202636189,
+  "sha256": "ec766ec83009dc372a4199b26b1be493d8416db312f0de0b18f38bf59a8b0edf",
+  "files": {
+    "asr.onnx": {
+      "size": 239233841,
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+    },
+    "tokens.txt": {
+      "size": 315894,
+      "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+    },
+    "segmentation.onnx": {
+      "size": 5992913,
+      "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+    },
+    "embedding.onnx": {
+      "size": 39593761,
+      "sha256": "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b"
+    },
+    "Apache-2.0.txt": {
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "FunASR-MODEL-LICENSE.txt": {
+      "size": 5306,
+      "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8"
+    },
+    "NOTICE.txt": {
+      "size": 1836,
+      "sha256": "e825420196ef803cc486e41fdb66aaf4f162379a7d9280e1039d3f21f8900be0"
+    },
+    "onnxruntime-LICENSE.txt": {
+      "size": 1073,
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+    },
+    "pyannote-LICENSE.txt": {
+      "size": 1061,
+      "sha256": "14d7016ad68e7394d6e6b78d96cc2ae431c905287b89674cfdf021e79e62b8ba"
+    }
+  }
+}

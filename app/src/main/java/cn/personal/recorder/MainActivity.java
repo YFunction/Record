@@ -115,6 +115,7 @@ public final class MainActivity extends Activity {
     private static String duration(long seconds) { return String.format(Locale.ROOT, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60); }
     private void startRecording() {
         launchHandled = true;
+        if (AnalysisService.transcribing) { toast("请先完成或取消本地文字提取，再开始录音"); return; }
         if (exportBusy) { toast("请等待音频导出完成"); return; }
         if (RecordingService.active) return;
         releasePlayer();
@@ -177,9 +178,9 @@ public final class MainActivity extends Activity {
             if (shown++ >= 20) break;
             LinearLayout item = card(library); item.setPadding(dp(16), dp(10), dp(16), dp(10));
             item.addView(label(new SimpleDateFormat("MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time)), 17, INK));
-            String saved = entry.uploaded == entry.chunks.length ? "云端已保存" : "本地已加密";
-            item.addView(label(String.format(Locale.CHINA, "%s · %.1f MB · 播放 / 导出  ›", saved, entry.bytes / 1048576.0), 12, MUTED));
-            item.setContentDescription("录音 " + new java.util.Date(entry.time) + "，点击播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
+            String saved = entry.chunks.length == 0 ? "文字与总结" : entry.uploaded == entry.chunks.length ? "云端已保存" : "本地已加密";
+            item.addView(label(entry.chunks.length == 0 ? "转写与总结已加密 · 点击查看  ›" : String.format(Locale.CHINA, "%s · %.1f MB · 播放 / 文字  ›", saved, entry.bytes / 1048576.0), 12, MUTED));
+            item.setContentDescription("录音 " + new java.util.Date(entry.time) + "，点击查看文字、播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
         }
         if (entries.size() > 20) library.addView(button("查看更早录音（共 " + entries.size() + " 场）", () -> unlocked(() -> {
             String[] names = new String[entries.size()]; for (int i = 0; i < names.length; i++) names[i] = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new java.util.Date(entries.get(i).time));
@@ -188,15 +189,18 @@ public final class MainActivity extends Activity {
     }
     private void recordingActions(RecordingLibrary.Entry entry) {
         if (!editable()) return;
-        showPrivate(new AlertDialog.Builder(this).setTitle("本地录音").setItems(new String[]{"播放（内存解密）", "导出 AAC 音频", "删除本地录音"}, (d, w) -> {
-            if (w == 0) play(entry);
-            else if (w == 1) showPrivate(new AlertDialog.Builder(this).setTitle("导出音频").setMessage("导出的 AAC 文件是明文，可由其他播放器打开。请选择你控制的保存位置。意外中断的录音只导出已保存的连续片段。")
+        showPrivate(new AlertDialog.Builder(this).setTitle("本地录音").setItems(new String[]{"文字与 AI 总结", "播放（内存解密）", "导出 AAC 音频", "删除本地录音与文字"}, (d, w) -> {
+            if (w == 0) { releasePlayer(); startActivity(new Intent(this, TextActivity.class).putExtra("session", entry.id)); }
+            else if (w == 1) { if (entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看"); else play(entry); }
+            else if (w == 2 && entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看");
+            else if (w == 2) showPrivate(new AlertDialog.Builder(this).setTitle("导出音频").setMessage("导出的 AAC 文件是明文，可由其他播放器打开。请选择你控制的保存位置。意外中断的录音只导出已保存的连续片段。")
                 .setNegativeButton("取消", null).setPositiveButton("选择位置", (dialog, which) -> { exportSession = entry.id;
                     startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/aac")
                         .putExtra(Intent.EXTRA_TITLE, "录音-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new java.util.Date(entry.time)) + ".aac"), 21); }));
-            else showPrivate(new AlertDialog.Builder(this).setTitle("删除本地录音？").setMessage("这会删除整场录音的手机副本。未上传的片段将无法恢复，云端副本不会删除。")
+            else showPrivate(new AlertDialog.Builder(this).setTitle("删除本地录音与文字？").setMessage("这会删除本场音频、转写和总结的手机副本。未上传内容将无法恢复，云端副本不会删除。")
                 .setNegativeButton("取消", null).setPositiveButton("删除", (dialog, which) -> { if (!editable()) return; releasePlayer();
-                    io.execute(() -> { boolean ok = RecordingLibrary.delete(entry); handler.post(() -> { librarySignature = ""; loadLibrary(); toast(ok ? "本地录音已删除" : "部分文件删除失败，请重试"); }); }); }));
+                    if (AnalysisService.busy) { toast("请等待文字处理结束后再删除"); return; }
+                    io.execute(() -> { boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok; boolean result = ok; handler.post(() -> { librarySignature = ""; loadLibrary(); toast(result ? "本地录音与文字已删除" : "部分文件删除失败，请重试"); }); }); }));
         }).setNegativeButton("关闭", null));
     }
     private void play(RecordingLibrary.Entry entry) {

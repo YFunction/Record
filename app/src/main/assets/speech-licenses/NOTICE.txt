@@ -1,0 +1,35 @@
+Record offline speech bundle v1
+
+Recognition: SenseVoiceSmall by Alibaba Group / FunAudioLLM / ModelScope.
+Source: https://huggingface.co/FunAudioLLM/SenseVoiceSmall
+License: FunASR Model Open Source License Agreement v1.1 (included).
+Packaged model: sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.
+asr.onnx is the upstream int8 ONNX export, renamed from model.int8.onnx;
+tokens.txt is unchanged. No model fine-tuning was performed by Record.
+
+Segmentation: pyannote/segmentation-3.0 by pyannote / CNRS.
+Authors: Alexis Plaquet, Herve Bredin; trained by Severin Baroudi.
+Source: https://huggingface.co/pyannote/segmentation-3.0
+License: MIT (upstream license included).
+segmentation.onnx is the sherpa-onnx ONNX export, renamed from model.onnx.
+Citation: Plaquet and Bredin, Powerset multi-class cross entropy loss for
+neural speaker diarization, INTERSPEECH 2023.
+
+Voice embeddings: 3D-Speaker ERes2Net by Alibaba Group / ModelScope.
+Source: https://github.com/modelscope/3D-Speaker
+Original model: iic/speech_eres2net_base_sv_zh-cn_3dspeaker_16k.
+License: Apache-2.0 (included).
+embedding.onnx is the sherpa-onnx export renamed from
+3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx.
+Embeddings are only held in memory during one recording's transcription.
+
+Inference: sherpa-onnx v1.13.8, Apache-2.0.
+Source: https://github.com/k2-fsa/sherpa-onnx
+Copyright contributors, including Xiaomi Corporation.
+Bundled ONNX Runtime by Microsoft Corporation, MIT license (included).
+Android wrapper uses Kotlin (JetBrains), Apache-2.0.
+
+Model conversion and public downloads are provided by the k2-fsa
+sherpa-onnx project. Model filenames were changed for packaging only.
+Models can misrecognize speech and speaker counts; speaker IDs are estimates
+and do not identify real people. Record does not upload audio to the AI API.

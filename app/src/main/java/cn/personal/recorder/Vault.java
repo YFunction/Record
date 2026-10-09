@@ -71,6 +71,13 @@ final class Vault {
     }
     void saveToken(String token) throws Exception { saveSecret("upload-token", token.getBytes(StandardCharsets.UTF_8)); }
     String token() throws Exception { return new String(loadSecret("upload-token"), StandardCharsets.UTF_8); }
+    boolean aiConfigured() { return prefs.contains("deepseek-key"); }
+    void saveAiKey(String key) throws Exception {
+        if (!key.matches("[A-Za-z0-9_-]{16,256}")) throw new IllegalArgumentException("Key 格式无效，请检查是否含空格");
+        saveSecret("deepseek-key", key.getBytes(StandardCharsets.UTF_8));
+    }
+    String aiKey() throws Exception { return new String(loadSecret("deepseek-key"), StandardCharsets.UTF_8); }
+    void removeAiKey() { prefs.edit().remove("deepseek-key").apply(); }
     SharedPreferences preferences() { return prefs; }
     boolean recordingConfigured() { return prefs.contains("recording-key"); }
     boolean cloudEnabled() { return prefs.getBoolean("cloud-enabled", prefs.contains("server")); }

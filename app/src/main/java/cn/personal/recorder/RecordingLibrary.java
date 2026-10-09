@@ -15,10 +15,13 @@ final class RecordingLibrary {
         final long time, bytes;
         final int uploaded;
         Entry(String id, List<File> files) {
+            this(id, files, 0);
+        }
+        Entry(String id, List<File> files, long textTime) {
             this.id = id; chunks = files.toArray(new File[0]);
             long total = 0; int ack = 0;
             for (File file : chunks) { total += file.length(); if (ChunkStore.uploaded(file)) ack++; }
-            bytes = total; uploaded = ack; time = chunks[0].lastModified();
+            bytes = total; uploaded = ack; time = chunks.length == 0 ? textTime : chunks[0].lastModified();
         }
     }
     static List<Entry> list(Context context) {
@@ -29,6 +32,11 @@ final class RecordingLibrary {
         }
         List<Entry> entries = new ArrayList<>();
         for (Map.Entry<String, List<File>> e : sessions.entrySet()) entries.add(new Entry(e.getKey(), e.getValue()));
+        for (File file : TextStore.files(context)) {
+            String id = file.getName().substring(0, 36);
+            File latest = TextStore.latest(context, id);
+            if (!sessions.containsKey(id) && latest != null) { sessions.put(id, new ArrayList<>()); entries.add(new Entry(id, new ArrayList<>(), latest.lastModified())); }
+        }
         entries.sort(Comparator.comparingLong((Entry e) -> e.time).reversed());
         return entries;
     }

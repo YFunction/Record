@@ -40,11 +40,14 @@ final class Uploader {
         String base = validateUrl(vault.preferences().getString("server", ""));
         String token = vault.token();
         long until = SystemClock.elapsedRealtime() + budgetMillis;
-        for (File f : ChunkStore.files(c)) {
+        java.util.List<File> pending = new java.util.ArrayList<>(java.util.Arrays.asList(ChunkStore.files(c)));
+        pending.addAll(java.util.Arrays.asList(TextStore.files(c)));
+        for (File f : pending) {
             if (!vault.configured() || cancelled.getAsBoolean() || SystemClock.elapsedRealtime() > until) return;
             if (ChunkStore.uploaded(f)) continue;
             String digest = ChunkStore.digest(f);
-            HttpURLConnection conn = (HttpURLConnection) new URL(base + "/v1/chunks/" + f.getName()).openConnection();
+            boolean text = TextStore.validName(f.getName());
+            HttpURLConnection conn = (HttpURLConnection) new URL(base + (text ? "/v1/documents/" : "/v1/chunks/") + f.getName()).openConnection();
             try {
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(10_000); conn.setReadTimeout(15_000);
@@ -70,7 +73,7 @@ final class Uploader {
                 if (!ack.getBoolean("stored") || !f.getName().equals(ack.getString("name")) ||
                     !digest.equals(ack.getString("sha256"))) throw new java.io.IOException("服务器确认不匹配");
                 ChunkStore.acknowledge(f);
-                status = "密文已上传，待传 " + ChunkStore.pending(c) + " 段";
+                status = "密文已上传，待传 " + (ChunkStore.pending(c) + TextStore.pending(c)) + " 份";
             } catch (Exception e) { status = "上传暂未完成（" + safeError(e) + "），本地密文保留"; throw e; }
             finally { conn.disconnect(); }
         }

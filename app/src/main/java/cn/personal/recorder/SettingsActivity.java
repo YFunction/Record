@@ -34,6 +34,7 @@ public final class SettingsActivity extends Activity {
     private ProgressBar capacity;
     private Switch cloud, wifi;
     private boolean refreshing;
+    private boolean modelsReady;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -86,6 +87,17 @@ public final class SettingsActivity extends Activity {
         capacity.setProgressTintList(ColorStateList.valueOf(ui.accent)); safety.addView(capacity);
         ui.action(safety, "清理已上传副本", "未上传片段会保留", this::clearUploaded);
 
+        LinearLayout ai = ui.card(root); ai.addView(ui.title("文字与 AI", 17));
+        modelsReady = ModelManager.ready(this);
+        ui.action(ai, "离线文字与发言人模型", modelsReady ? "已安装 · 可离线提取" : "首次需下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0), this::speechModels);
+        ui.action(ai, "开源模型与许可", "SenseVoiceSmall、pyannote、3D-Speaker", this::modelNotices);
+        ui.action(ai, "DeepSeek Key", vault.aiConfigured() ? "已加密保存 · 点击修改" : "由你提供，仅用于文字总结", this::configureAi);
+        ai.addView(ui.label("V4.1 Flash · 本地转写，AI 仅接收文字。HTTPS 保护传输，服务商会读取文字用于总结。", 12, ui.muted));
+        ui.action(ai, "清除 DeepSeek Key", "不影响录音、文字和已有总结", () -> {
+            if (AnalysisService.busy) { toast("请先结束当前文字处理"); return; }
+            new AlertDialog.Builder(this).setTitle("清除手机上的 Key？").setNegativeButton("取消", null).setPositiveButton("清除", (d, w) -> { vault.removeAiKey(); buildScreen(); }).show();
+        });
+
         LinearLayout system = ui.card(root); system.addView(ui.title("应用", 17));
         system.addView(ui.label("外观 · 跟随系统浅色 / 深色模式", 14, ui.ink));
         ui.action(system, "权限与后台运行", "麦克风、通知与电池设置", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
@@ -109,15 +121,16 @@ public final class SettingsActivity extends Activity {
     private void rebuildLater() { handler.post(() -> { if (!isDestroyed()) buildScreen(); }); }
     private boolean editable() { if (RecordingService.active) { toast("请先停止录音再修改此设置"); return false; } return true; }
     private void refreshInfo() {
+        if (modelsReady != ModelManager.ready(this)) { buildScreen(); return; }
         cloud.setEnabled(!RecordingService.active); wifi.setEnabled(!RecordingService.active);
         keyStatus.setText(vault.preferences().getBoolean("backed-up", false) ? "恢复密钥已备份" : "尚未备份 · 建议尽早保存独立副本");
         if (refreshing || io.isShutdown()) return; refreshing = true;
         io.execute(() -> {
             try {
-                long bytes = ChunkStore.bytes(this); int count = ChunkStore.pending(this);
+                long bytes = ChunkStore.bytes(this); int count = ChunkStore.pending(this) + TextStore.pending(this);
                 handler.post(() -> { refreshing = false; if (isDestroyed()) return;
                     storage.setText(String.format(Locale.CHINA, "本地 %.1f / 256 MB", bytes / 1048576.0)); capacity.setProgress((int) (bytes / 1048576));
-                    pending.setText(!vault.cloudEnabled() ? "仅本地保存" : (!vault.configured() ? "服务器配置与密钥备份完成后开始同步" : "待同步 " + count + " 段 · " + Uploader.status));
+                    pending.setText(!vault.cloudEnabled() ? "仅本地保存" : (!vault.configured() ? "服务器配置与密钥备份完成后开始同步" : "待同步 " + count + " 份 · " + Uploader.status));
                 });
             } catch (Exception e) { handler.post(() -> refreshing = false); }
         });
@@ -125,6 +138,39 @@ public final class SettingsActivity extends Activity {
     private EditText input(String label, boolean secret) {
         EditText field = new EditText(this); field.setHint(label); field.setTextSize(14); field.setSingleLine(true); field.setTextColor(ui.ink); field.setHintTextColor(ui.muted);
         field.setInputType(InputType.TYPE_CLASS_TEXT | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_VARIATION_URI)); return field;
+    }
+    private void configureAi() {
+        if (AnalysisService.busy) { toast("请先结束当前文字处理"); return; }
+        LinearLayout form = ui.column(20); EditText key = input("输入你的 DeepSeek API Key", true); key.setSaveEnabled(false); form.addView(key);
+        form.addView(ui.label("Key 只加密保存在手机，不传到你的录音存储服务器。使用官方 deepseek-flash 模型，仅在你点击总结后发送文字并计费。", 12, ui.muted));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("DeepSeek Key").setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (AnalysisService.busy) return;
+            try { vault.initialize(""); vault.saveAiKey(key.getText().toString().trim()); key.setText(""); dialog.dismiss(); buildScreen(); toast("Key 已加密保存"); }
+            catch (Exception e) { toast("Key 保存失败，请检查格式"); }
+        })); dialog.show();
+    }
+    private void speechModels() {
+        if (AnalysisService.busy) { toast(AnalysisService.state); return; }
+        new AlertDialog.Builder(this).setTitle("离线文字与发言人模型")
+            .setMessage("下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0) + "，安装需约 700 MB 可用空间，建议使用 Wi-Fi。模型安装后可断网转写，不上传音频。也可先从版本发布页下载模型 ZIP，再导入。")
+            .setNegativeButton("取消", null).setNeutralButton("导入模型包", (d, w) -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip"), 24))
+            .setPositiveButton("下载模型", (d, w) -> {
+                try { startForegroundService(new Intent(this, AnalysisService.class).setAction(AnalysisService.MODELS)); toast("已开始下载，进度见通知栏"); }
+                catch (Exception e) { toast("系统未允许下载，请重新打开设置"); }
+            }).show();
+    }
+    private void modelNotices() {
+        try {
+            ByteArrayOutputStream contents = new ByteArrayOutputStream();
+            for (String name : new String[]{"NOTICE.txt", "FunASR-MODEL-LICENSE.txt", "pyannote-LICENSE.txt", "Apache-2.0.txt", "onnxruntime-LICENSE.txt"}) {
+                contents.write(("\n\n" + name + "\n\n").getBytes(StandardCharsets.UTF_8));
+                try (InputStream in = getAssets().open("speech-licenses/" + name)) { byte[] block = new byte[2048]; int n; while ((n = in.read(block)) != -1) contents.write(block, 0, n); }
+            }
+            TextView text = ui.label(contents.toString("UTF-8"), 13, ui.ink); text.setTextIsSelectable(true); text.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(12));
+            ScrollView scroll = new ScrollView(this); scroll.addView(text);
+            new AlertDialog.Builder(this).setTitle("开源模型与许可").setView(scroll).setPositiveButton("关闭", null).show();
+        } catch (Exception e) { toast("无法读取许可说明"); }
     }
     private void configure() {
         if (!editable()) return;
@@ -165,9 +211,11 @@ public final class SettingsActivity extends Activity {
         }).show();
     }
     private void clearUploaded() {
+        if (AnalysisService.transcribing) { toast("请先结束文字提取再清理音频"); return; }
         if (!editable()) return;
         new AlertDialog.Builder(this).setTitle("清理已上传副本？").setMessage("仅删除服务器确认保存的片段。清理后手机端录音可能不完整；请确保云端备份可靠。")
             .setNegativeButton("取消", null).setPositiveButton("清理", (d, w) -> { if (!editable()) return;
+                if (AnalysisService.transcribing) { toast("请先结束文字提取"); return; }
                 io.execute(() -> { ChunkStore.clearUploaded(this); handler.post(() -> { refreshInfo(); toast("清理完成"); }); }); }).show();
     }
     private void exportDiagnostics() {
@@ -178,6 +226,12 @@ public final class SettingsActivity extends Activity {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         Uri destination = data.getData();
+        if (request == 24) {
+            if (AnalysisService.busy) { toast("请先结束当前处理"); return; }
+            try { getContentResolver().takePersistableUriPermission(destination, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException ignored) { }
+            try { startForegroundService(new Intent(this, AnalysisService.class).setAction(AnalysisService.IMPORT).setData(destination)); }
+            catch (Exception e) { toast("无法开始模型导入，请重试"); } return;
+        }
         if (request == 22 && !editable()) return;
         io.execute(() -> {
             try {

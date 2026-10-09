@@ -14,6 +14,8 @@ import urllib.request
 from urllib.parse import urlsplit
 
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9]{8}\.enc\Z")
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DOCUMENT_NAME = re.compile(UUID + "_" + UUID + r"\.enc\Z")
 MAX_CHUNK = 2 * 1024 * 1024
 
 
@@ -22,7 +24,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def download(server: str, output: Path, token: str):
+def download(server: str, output: Path, token: str, documents: bool = False):
+    pattern = DOCUMENT_NAME if documents else NAME
+    collection = "documents" if documents else "chunks"
     address = urlsplit(server)
     if address.scheme != "https" and not (address.scheme == "http" and address.hostname in {"127.0.0.1", "localhost"}):
         raise ValueError("Use HTTPS; HTTP is allowed only on loopback for local tests")
@@ -42,17 +46,17 @@ def download(server: str, output: Path, token: str):
 
     after = ""
     while True:
-        page = json.loads(get("/v1/chunks" + ("?after=" + after if after else ""), 256 * 1024))
-        for row in page["chunks"]:
+        page = json.loads(get("/v1/" + collection + ("?after=" + after if after else ""), 256 * 1024))
+        for row in page[collection]:
             name, digest = row["name"], row["sha256"]
-            if not NAME.fullmatch(name) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            if not pattern.fullmatch(name) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError("Invalid server index")
             target = output / name
             if target.exists():
                 if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
                     continue
                 raise ValueError(f"Existing file differs: {name}")
-            data = get("/v1/chunks/" + name, MAX_CHUNK)
+            data = get("/v1/" + collection + "/" + name, MAX_CHUNK)
             if len(data) != row["size"] or hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError("Download checksum mismatch")
             with target.open("xb") as file:
@@ -60,7 +64,7 @@ def download(server: str, output: Path, token: str):
         cursor = page.get("next")
         if cursor is None:
             return
-        if not NAME.fullmatch(cursor) or cursor <= after:
+        if not pattern.fullmatch(cursor) or cursor <= after:
             raise ValueError("Invalid pagination cursor")
         after = cursor
 

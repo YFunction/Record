@@ -110,4 +110,22 @@ public class UiTest {
             assertTrue(context.getSystemService(KeyguardManager.class).isKeyguardLocked());
         }
     }
+    @Test public void textPageRequiresExplicitActionAndDoesNotUploadOnOpen() throws Exception {
+        android.content.Intent intent = new android.content.Intent(RuntimeEnvironment.getApplication(), TextActivity.class)
+            .putExtra("session", "10000000-0000-4000-8000-000000000001");
+        try (ActivityController<TextActivity> controller = Robolectric.buildActivity(TextActivity.class, intent).setup()) {
+            TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
+            assertNotNull(find(activity, "本地提取文字")); assertNotNull(find(activity, "生成 AI 总结"));
+            assertNull(shadowOf(activity).getNextStartedService()); assertFalse(shadowOf(activity).getShowWhenLocked());
+            render(activity, "light-text");
+        }
+    }
+    @Test @Config(qualifiers = "w393dp-h852dp-night-xxhdpi") public void darkTextPageUsesThemeAndKeepsSummaryExplicit() throws Exception {
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), TextActivity.class).putExtra("session", "10000000-0000-4000-8000-000000000001");
+        try (ActivityController<TextActivity> controller = Robolectric.buildActivity(TextActivity.class, intent).setup()) {
+            TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
+            assertEquals(activity.getColor(R.color.ink), find(activity, "录音文字").getCurrentTextColor());
+            assertFalse(find(activity, "生成 AI 总结").isEnabled()); assertNull(shadowOf(activity).getNextStartedService()); render(activity, "dark-text");
+        }
+    }
 }

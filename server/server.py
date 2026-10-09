@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9]{8}\.enc\Z")
+DOCUMENT_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.enc\Z")
 MAX_CHUNK = 2 * 1024 * 1024
 
 
@@ -34,7 +35,8 @@ def sync_directory(path: Path) -> None:
 
 
 class Store:
-    def __init__(self, root: Path, capacity: int):
+    def __init__(self, root: Path, capacity: int, name_pattern=NAME, magic=b"ER01"):
+        self.name_pattern, self.magic = name_pattern, magic
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.blobs = self.root / "chunks"
@@ -49,9 +51,9 @@ class Store:
         self.db.commit()
 
     def put(self, name: str, payload: bytes, claimed: str) -> tuple[int, dict]:
-        if not NAME.fullmatch(name):
+        if not self.name_pattern.fullmatch(name):
             raise StoreError(400, "invalid chunk name")
-        if not 32 <= len(payload) <= MAX_CHUNK or payload[:4] != b"ER01":
+        if not 32 <= len(payload) <= MAX_CHUNK or payload[:4] != self.magic:
             raise StoreError(400, "invalid envelope")
         digest = hashlib.sha256(payload).hexdigest()
         if not hmac.compare_digest(digest, claimed):
@@ -98,7 +100,7 @@ class Store:
         return {"stored": True, "name": name, "sha256": digest, "size": size}
 
     def list(self, after: str) -> dict:
-        if after and not NAME.fullmatch(after):
+        if after and not self.name_pattern.fullmatch(after):
             raise StoreError(400, "invalid cursor")
         with self.lock:
             rows = self.db.execute("SELECT name, sha256, size FROM chunks WHERE name > ? ORDER BY name LIMIT 501", (after,)).fetchall()
@@ -106,7 +108,7 @@ class Store:
                 "next": rows[499][0] if len(rows) > 500 else None}
 
     def get(self, name: str) -> tuple[bytes, str]:
-        if not NAME.fullmatch(name):
+        if not self.name_pattern.fullmatch(name):
             raise StoreError(400, "invalid chunk name")
         with self.lock:
             row = self.db.execute("SELECT sha256 FROM chunks WHERE name=?", (name,)).fetchone()
@@ -130,8 +132,13 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, address, store: Store, token: str):
         self.store, self.token = store, token
+        self.documents = Store(store.root / "texts", int(os.environ.get("RECORDER_TEXT_QUOTA_BYTES", str(256 * 1024**2))), DOCUMENT_NAME, b"ET01")
         self.slots = threading.BoundedSemaphore(16)
         super().__init__(address, Handler)
+
+    def server_close(self):
+        super().server_close()
+        self.documents.close()
 
     def get_request(self):
         sock, address = super().get_request()
@@ -181,11 +188,13 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorized():
                 raise StoreError(401, "unauthorized")
             path = urlsplit(self.path)
-            prefix = "/v1/chunks/"
+            documents = path.path.startswith("/v1/documents/")
+            prefix = "/v1/documents/" if documents else "/v1/chunks/"
+            store = self.server.documents if documents else self.server.store
             if not path.path.startswith(prefix) or path.query:
                 raise StoreError(404, "not found")
             name = path.path[len(prefix):]
-            if not NAME.fullmatch(name):
+            if not store.name_pattern.fullmatch(name):
                 raise StoreError(400, "invalid chunk name")
             if self.headers.get("Transfer-Encoding") is not None:
                 raise StoreError(400, "content length required")
@@ -201,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self.rfile.read(size)
             if len(payload) != size:
                 raise StoreError(400, "incomplete body")
-            code, body = self.server.store.put(name, payload, digest)
+            code, body = store.put(name, payload, digest)
             self.respond(code, body)
         except StoreError as exc:
             self.respond(exc.status, {"error": exc.message})
@@ -213,15 +222,21 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorized():
                 raise StoreError(401, "unauthorized")
             path = urlsplit(self.path)
-            if path.path == "/v1/chunks":
+            documents = path.path == "/v1/documents" or path.path.startswith("/v1/documents/")
+            prefix = "/v1/documents" if documents else "/v1/chunks"
+            store = self.server.documents if documents else self.server.store
+            if path.path == prefix:
                 query = parse_qs(path.query)
                 if set(query) - {"after"}:
                     raise StoreError(400, "invalid query")
-                self.respond(200, self.server.store.list(query.get("after", [""])[0]))
+                body = store.list(query.get("after", [""])[0])
+                if documents:
+                    body["documents"] = body.pop("chunks")
+                self.respond(200, body)
                 return
-            if not path.path.startswith("/v1/chunks/") or path.query:
+            if not path.path.startswith(prefix + "/") or path.query:
                 raise StoreError(404, "not found")
-            payload, digest = self.server.store.get(path.path[len("/v1/chunks/"):])
+            payload, digest = store.get(path.path[len(prefix + "/"):])
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(len(payload)))

@@ -21,8 +21,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
-from server import MAX_CHUNK, Server, Store, StoreError
+from server import MAX_CHUNK, DOCUMENT_NAME, Server, Store, StoreError
 from recover import decrypt_chunk, download, recover
+from text_recover import decrypt_document, recover_documents
 
 SESSION = "10000000-0000-4000-8000-000000000001"
 
@@ -58,6 +59,67 @@ class ProtocolTests(unittest.TestCase):
         if not self.root.resolve().is_relative_to((ROOT / ".tools" / "test-tmp").resolve()):
             raise RuntimeError("Refusing to clean a temporary directory outside the test workspace")
         self.temp.cleanup()
+
+    def text_envelope(self):
+        name = f"{SESSION}_20000000-0000-4000-8000-000000000001.enc"
+        nonce = secrets.token_bytes(12)
+        text = json.dumps({'version': 1, 'session': SESSION, 'updatedAt': 123, 'segments': [{'speaker': 0, 'text': 'synthetic transcript'}], 'summary': 'synthetic summary'}).encode()
+        blob = b'ET01' + nonce + AESGCM(self.key).encrypt(nonce, text, ('text-v1:' + name).encode())
+        return name, blob, text
+
+    def test_encrypted_text_upload_retry_download_and_recovery(self):
+        name, blob, text = self.text_envelope()
+        code, _ = self.request('/v1/documents/' + name, blob); self.assertEqual(code, 201)
+        code, _ = self.request('/v1/documents/' + name, blob); self.assertEqual(code, 200)
+        code, listing = self.request('/v1/documents'); self.assertEqual(code, 200)
+        self.assertEqual(json.loads(listing)['documents'][0]['name'], name)
+        stored = self.server.documents.blobs.joinpath(name).read_bytes()
+        self.assertNotIn(b'synthetic transcript', stored); self.assertNotIn(b'synthetic summary', stored)
+        self.assertEqual(AESGCM(self.key).decrypt(stored[4:16], stored[16:], ('text-v1:' + name).encode()), text)
+        code, downloaded = self.request('/v1/documents/' + name); self.assertEqual(code, 200); self.assertEqual(downloaded, blob)
+        changed = bytearray(blob); changed[-1] ^= 1
+        code, _ = self.request('/v1/documents/' + name, bytes(changed)); self.assertEqual(code, 409)
+
+    def test_text_namespace_and_authentication_are_separate(self):
+        name, blob, _ = self.text_envelope()
+        code, _ = self.request('/v1/documents/' + name, blob, token='invalid'); self.assertEqual(code, 401)
+        audio_name, audio = envelope(self.key)
+        code, _ = self.request('/v1/documents/' + name, audio); self.assertEqual(code, 400)
+        code, _ = self.request('/v1/chunks/' + audio_name, blob); self.assertEqual(code, 400)
+        code, _ = self.request('/v1/documents/' + name, blob); self.assertEqual(code, 201)
+        code, listing = self.request('/v1/chunks'); self.assertEqual(code, 200); self.assertEqual(json.loads(listing)['chunks'], [])
+        code, _ = self.request('/v1/documents?after=../secret'); self.assertEqual(code, 400)
+
+    def test_text_quota_does_not_change_audio_quota(self):
+        self.server.documents.capacity = 40
+        name, blob, _ = self.text_envelope()
+        code, _ = self.request('/v1/documents/' + name, blob); self.assertEqual(code, 507)
+        audio_name, audio = envelope(self.key)
+        code, _ = self.request('/v1/chunks/' + audio_name, audio); self.assertEqual(code, 201)
+
+    def test_text_index_persists_when_storage_reopens(self):
+        name, blob, _ = self.text_envelope(); self.request('/v1/documents/' + name, blob)
+        self.server.documents.close()
+        self.server.documents = Store(self.store.root / 'texts', 256 * 1024**2, DOCUMENT_NAME, b'ET01')
+        code, downloaded = self.request('/v1/documents/' + name); self.assertEqual(code, 200); self.assertEqual(downloaded, blob)
+
+    def test_text_downloader_and_recovery_tool_round_trip(self):
+        name, blob, text = self.text_envelope(); self.assertEqual(self.request('/v1/documents/' + name, blob)[0], 201)
+        encrypted = self.root / 'text-download'; output = self.root / 'text-plain'
+        download(self.url, encrypted, self.token, documents=True)
+        download(self.url, encrypted, self.token, documents=True)
+        self.assertEqual((encrypted / name).read_bytes(), blob)
+        self.assertEqual(recover_documents(encrypted, output, self.key), 1)
+        self.assertEqual(json.loads((output / (name[:-4] + '.json')).read_text()), json.loads(text))
+        with self.assertRaisesRegex(ValueError, 'already exists'): recover_documents(encrypted, output, self.key)
+
+    def test_text_tampering_wrong_key_and_rename_rejected_before_export(self):
+        name, blob, _ = self.text_envelope()
+        for key, filename, data in [(secrets.token_bytes(32), name, blob), (self.key, name.replace('20000000', '30000000'), blob), (self.key, name, blob[:-1] + bytes([blob[-1] ^ 1]))]:
+            with self.assertRaises(InvalidTag): decrypt_document(key, filename, data)
+        source = self.root / 'bad-text'; source.mkdir(); (source / name).write_bytes(blob[:-1] + bytes([blob[-1] ^ 1]))
+        with self.assertRaises(InvalidTag): recover_documents(source, self.root / 'text-plain', self.key)
+        self.assertFalse((self.root / 'text-plain').exists())
 
     def request(self, path, blob=None, token=None, digest=None):
         headers = {"Authorization": "Bearer " + (self.token if token is None else token)}
