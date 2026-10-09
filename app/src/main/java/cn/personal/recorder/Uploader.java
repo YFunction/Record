@@ -41,7 +41,7 @@ final class Uploader {
         String token = vault.token();
         long until = SystemClock.elapsedRealtime() + budgetMillis;
         for (File f : ChunkStore.files(c)) {
-            if (cancelled.getAsBoolean() || SystemClock.elapsedRealtime() > until) return;
+            if (!vault.configured() || cancelled.getAsBoolean() || SystemClock.elapsedRealtime() > until) return;
             if (ChunkStore.uploaded(f)) continue;
             String digest = ChunkStore.digest(f);
             HttpURLConnection conn = (HttpURLConnection) new URL(base + "/v1/chunks/" + f.getName()).openConnection();

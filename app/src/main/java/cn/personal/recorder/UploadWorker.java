@@ -20,17 +20,24 @@ public final class UploadWorker extends Worker {
         return new Constraints.Builder().setRequiredNetworkType(wifiOnly ? NetworkType.UNMETERED : NetworkType.CONNECTED).build();
     }
     static void schedule(Context c) {
+        if (!new Vault(c).configured()) return;
         WorkManager wm = WorkManager.getInstance(c);
         wm.enqueueUniqueWork("upload-now", ExistingWorkPolicy.KEEP,
             new OneTimeWorkRequest.Builder(UploadWorker.class).setConstraints(constraints(c))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build());
     }
     static void periodic(Context c) {
+        if (!new Vault(c).configured()) {
+            WorkManager.getInstance(c).cancelUniqueWork("upload-now");
+            WorkManager.getInstance(c).cancelUniqueWork("upload-recovery");
+            return;
+        }
         WorkManager.getInstance(c).enqueueUniquePeriodicWork("upload-recovery", ExistingPeriodicWorkPolicy.UPDATE,
             new PeriodicWorkRequest.Builder(UploadWorker.class, 15, TimeUnit.MINUTES)
                 .setConstraints(constraints(c)).build());
     }
     @Override public Result doWork() {
+        if (!new Vault(getApplicationContext()).configured()) return Result.success();
         try {
             Uploader.drain(getApplicationContext(), () -> isStopped(), 60_000);
             return ChunkStore.pending(getApplicationContext()) == 0 ? Result.success() : Result.retry();

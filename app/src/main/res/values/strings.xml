@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="status_detail">%1$s\n\n%2$s\n待传片段：%3$d\n本地密文：%4$d MiB / 256 MiB</string>
+    <string name="playback_detail">%1$s · %2$s · 点击停止</string>
 </resources>

@@ -69,9 +69,11 @@ final class Vault {
     void saveToken(String token) throws Exception { saveSecret("upload-token", token.getBytes(StandardCharsets.UTF_8)); }
     String token() throws Exception { return new String(loadSecret("upload-token"), StandardCharsets.UTF_8); }
     SharedPreferences preferences() { return prefs; }
+    boolean recordingConfigured() { return prefs.contains("recording-key"); }
+    boolean cloudEnabled() { return prefs.getBoolean("cloud-enabled", prefs.contains("server")); }
     boolean configured() {
-        return prefs.contains("recording-key") && prefs.contains("upload-token") && prefs.contains("server")
-            && prefs.getBoolean("backed-up", false);
+        return cloudEnabled() && recordingConfigured() && prefs.contains("upload-token")
+            && !prefs.getString("server", "").isEmpty() && prefs.getBoolean("backed-up", false);
     }
-    boolean ready() { return configured() && prefs.getBoolean("ready", false); }
+    boolean ready() { return recordingConfigured() && prefs.getBoolean("ready", true); }
 }

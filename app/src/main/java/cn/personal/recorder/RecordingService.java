@@ -19,6 +19,7 @@ public final class RecordingService extends Service {
     static final String STOP = "cn.personal.recorder.STOP";
     static volatile boolean active;
     static volatile String state = "尚未录音";
+    static volatile long startedElapsed;
     private AacRecorder recorder;
     private PowerManager.WakeLock wakeLock;
     private ScheduledExecutorService uploader;
@@ -32,7 +33,7 @@ public final class RecordingService extends Service {
             return START_NOT_STICKY;
         }
         if (active || stopping) return START_NOT_STICKY;
-        if (!new Vault(this).configured()) { stopSelf(); return START_NOT_STICKY; }
+        if (!new Vault(this).recordingConfigured()) { stopSelf(); return START_NOT_STICKY; }
         try {
             NotificationManager nm = getSystemService(NotificationManager.class);
             nm.createNotificationChannel(new NotificationChannel("recording", "录音状态", NotificationManager.IMPORTANCE_LOW));
@@ -40,7 +41,8 @@ public final class RecordingService extends Service {
             recorder = new AacRecorder(this);
             wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EncryptedRecorder:capture");
             wakeLock.acquire(60 * 60 * 1000L);
-            active = true; state = "正在准备麦克风与编码器";
+            active = true; startedElapsed = 0; state = "正在准备麦克风与编码器";
+            if (new Vault(this).configured()) {
             uploader = Executors.newSingleThreadScheduledExecutor();
             uploader.scheduleWithFixedDelay(() -> {
                 try { Uploader.drain(this, () -> !active, 20_000); } catch (Exception ignored) {}
@@ -48,10 +50,15 @@ public final class RecordingService extends Service {
                     if (active) getSystemService(NotificationManager.class).notify(1, notification(Uploader.status));
                 });
             }, 0, 3, TimeUnit.SECONDS);
+            }
             Thread capture = new Thread(() -> {
                 try {
                     recorder.run(() -> { if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L); },
-                        () -> state = "正在录音，音频约每 30 秒加密保存");
+                        () -> { startedElapsed = android.os.SystemClock.elapsedRealtime();
+                            state = "正在录音，音频约每 30 秒加密保存";
+                            main.post(() -> getSystemService(NotificationManager.class).notify(1,
+                                notification(new Vault(this).configured() ? "本地加密 · 云端同步" : "本地加密保存")));
+                        });
                     state = "录音已停止，密文已保存在本地";
                 } catch (Exception e) { state = "录音已停止：" + e.getMessage(); }
                 finally { main.post(this::finishRecording); }
