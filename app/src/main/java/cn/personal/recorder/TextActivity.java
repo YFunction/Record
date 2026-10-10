@@ -9,6 +9,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.method.LinkMovementMethod;
+import android.text.style.BackgroundColorSpan;
 import android.text.style.ClickableSpan;
 import android.os.Bundle;
 import android.os.Handler;
@@ -18,6 +19,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.OutputStream;
@@ -42,6 +44,10 @@ public final class TextActivity extends Activity {
     private MediaPlayer player;
     private RecordingSource playbackSource;
     private int playbackGeneration;
+    private ScrollView pageScroll;
+    private int focusSegment = -1, focusOffset = -1;
+    private String focusField = "";
+    private boolean focusConsumed;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -49,8 +55,11 @@ public final class TextActivity extends Activity {
     };
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved); session = getIntent().getStringExtra("session"); if (!TextStore.validSession(session)) { finish(); return; }
+        focusSegment = getIntent().getIntExtra("focus-segment", -1);
+        focusField = getIntent().getStringExtra("focus-field"); if (focusField == null) focusField = "";
         refreshCategoryPolicy();
-        ui = new Ui(this); LinearLayout root = ui.screen(); LinearLayout heading = ui.row(); heading.addView(ui.button("返回", this::finish, false));
+        ui = new Ui(this); LinearLayout root = ui.screen(); pageScroll = (ScrollView) root.getParent();
+        LinearLayout heading = ui.row(); heading.addView(ui.button("返回", this::finish, false));
         TextView title = ui.title("录音详情", 24); title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title); root.addView(heading);
         root.addView(ui.label("分类：" + categoryName + " · 发言人识别在手机本地完成", 13, ui.muted));
         LinearLayout actions = ui.card(root); actions.addView(ui.title("录音文字", 18));
@@ -115,6 +124,19 @@ public final class TextActivity extends Activity {
             String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结" : value);
             String outlineText = document == null ? "" : document.optString("outline"); outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : outlineText);
             renderMindMap(document == null ? "" : document.optString("mindMap"));
+            if (!focusConsumed && document != null) {
+                focusConsumed = true;
+                View target = focusSegment >= 0 ? transcript : "AI 总结".equals(focusField) ? summary
+                    : "大纲".equals(focusField) ? outline : "思维导图".equals(focusField) ? mindMap : transcript;
+                target.post(() -> {
+                    if (isDestroyed() || target.getHeight() == 0) return;
+                    int[] targetAt = new int[2], scrollAt = new int[2];
+                    target.getLocationOnScreen(targetAt); pageScroll.getLocationOnScreen(scrollAt);
+                    int lineTop = focusSegment >= 0 && focusOffset >= 0 && transcript.getLayout() != null
+                        ? transcript.getLayout().getLineTop(transcript.getLayout().getLineForOffset(focusOffset)) : 0;
+                    pageScroll.smoothScrollTo(0, Math.max(0, pageScroll.getScrollY() + targetAt[1] - scrollAt[1] + lineTop - ui.dp(90)));
+                });
+            }
         } catch (Exception e) { toast("文字格式不完整，请重新提取"); }
     }
     private CharSequence transcriptSpans(JSONObject doc) throws Exception {
@@ -122,6 +144,7 @@ public final class TextActivity extends Activity {
         if (!doc.getBoolean("complete")) text.append("部分录音：只包含已保存片段\n\n");
         if (doc.optBoolean("previewSkipped")) text.append("实时预览漏掉了部分片段；可重新进行完整转写。\n\n");
         JSONArray lines = doc.getJSONArray("segments");
+        focusOffset = -1;
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.getJSONObject(i); String time = Transcript.time(line.getDouble("start")); int begin = text.length();
             text.append(time);
@@ -134,6 +157,10 @@ public final class TextActivity extends Activity {
                 .append(Transcript.speaker(doc, line.getInt("speaker")));
             if (line.optBoolean("overlap")) text.append("（重叠语音，归属待核对）");
             text.append("：").append(line.getString("text")).append('\n');
+            if (i == focusSegment) {
+                focusOffset = begin;
+                text.setSpan(new BackgroundColorSpan(ui.soft), begin, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
         }
         return text.length() == 0 ? "尚未提取文字" : text;
     }

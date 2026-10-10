@@ -91,6 +91,7 @@ public final class MainActivity extends Activity {
         liveCard.addView(liveScroll, new LinearLayout.LayoutParams(-1, dp(180)));
         liveCard.addView(label("手机本地识别的预览文字可能有误；停止后可进行完整转写与发言人区分。", 12, MUTED));
         LinearLayout heading = row(); libraryTitle = ui.title("最近录音", 19); heading.addView(libraryTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        heading.addView(button("搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))), false));
         heading.addView(button("刷新", () -> { librarySignature = ""; loadLibrary(); }, false)); root.addView(heading);
         filterCaption = label("全部分类", 12, MUTED); root.addView(filterCaption);
         playing = label("", 13, TEAL); playing.setVisibility(View.GONE); playing.setOnClickListener(v -> releasePlayer()); root.addView(playing);

@@ -66,7 +66,7 @@ public class UiTest {
     @Test public void lightHomeIsSimpleAndScreenshotsAllowed() throws Exception {
         try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
             MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
-            assertNotNull(find(activity, "设置")); assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音"));
+            assertNotNull(find(activity, "设置")); assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音")); assertNotNull(find(activity, "搜索"));
             assertNotNull(find(activity, "内容分类")); assertNotNull(find(activity, "隐私录音")); assertNotNull(find(activity, "会议记录")); assertNotNull(find(activity, "课堂记录"));
             assertNull(find(activity, "导入连接配置")); assertNull(find(activity, "备份恢复密钥"));
             assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
@@ -74,6 +74,20 @@ public class UiTest {
             find(activity, "设置").performClick(); Intent launched = shadowOf(activity).getNextStartedActivity();
             assertEquals(SettingsActivity.class.getName(), launched.getComponent().getClassName());
             render(activity, "light-home");
+        }
+    }
+    @Test public void homeSearchOpensAnUnlockedLocalSearchPage() throws Exception {
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            MainActivity activity = controller.get(); controller.visible().windowFocusChanged(true);
+            find(activity, "搜索").performClick();
+            Intent launched = shadowOf(activity).getNextStartedActivity();
+            assertNotNull(launched); assertEquals(SearchActivity.class.getName(), launched.getComponent().getClassName());
+        }
+        try (ActivityController<SearchActivity> controller = Robolectric.buildActivity(SearchActivity.class).setup()) {
+            assertNotNull(find(controller.get(), "本地搜索"));
+            assertNotNull(find(controller.get(), "搜索本机文字"));
+            assertEquals(0, controller.get().getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
+            render(controller.get(), "light-search");
         }
     }
     @Test @Config(qualifiers = "w393dp-h852dp-night-xxhdpi") public void darkHomeUsesDarkResources() throws Exception {
