@@ -17,6 +17,17 @@ final class Transcript {
     static String speaker(JSONObject doc, int id) {
         return doc.optJSONObject("names").optString(Integer.toString(id), id < 0 ? "未确定发言人" : "发言人 " + (id + 1));
     }
+    static int segmentAt(JSONObject doc, double seconds) {
+        if (doc == null || !Double.isFinite(seconds) || seconds < 0) return -1;
+        JSONArray segments = doc.optJSONArray("segments"); if (segments == null) return -1;
+        int active = -1; double latestStart = -1;
+        for (int i = 0; i < segments.length(); i++) {
+            JSONObject line = segments.optJSONObject(i); if (line == null) continue;
+            double start = line.optDouble("start", Double.NaN), end = line.optDouble("end", Double.NaN);
+            if (start <= seconds && seconds < end && start >= latestStart) { active = i; latestStart = start; }
+        }
+        return active;
+    }
     static String text(JSONObject doc) throws Exception {
         StringBuilder out = new StringBuilder(); JSONArray segments = doc.getJSONArray("segments");
         for (int i = 0; i < segments.length(); i++) {

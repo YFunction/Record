@@ -45,7 +45,7 @@ public final class TextActivity extends Activity {
     private RecordingSource playbackSource;
     private int playbackGeneration;
     private ScrollView pageScroll;
-    private int focusSegment = -1, focusOffset = -1;
+    private int focusSegment = -1, focusOffset = -1, activePlaybackSegment = -1, highlightOffset = -1;
     private String focusField = "";
     private boolean focusConsumed;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -72,7 +72,7 @@ public final class TextActivity extends Activity {
         result.addView(ui.label("发言人编号为估计结果，重叠说话与噪声可能造成误分，请核对。", 12, ui.muted));
         ui.action(result, "修改发言人称呼", "可改为你确认的姓名；修改后需重新总结", this::rename);
         ui.action(result, "修正转写文字", "按时间选择片段修改；修改后需重新总结", this::editSegment);
-        playbackStatus = ui.label("点击蓝色时间点回听对应录音", 12, ui.muted); playbackStatus.setOnClickListener(v -> stopPlayback()); result.addView(playbackStatus);
+        playbackStatus = ui.label("点击蓝色时间点回听；播放时高亮当前片段", 12, ui.muted); playbackStatus.setOnClickListener(v -> stopPlayback()); result.addView(playbackStatus);
         transcript = ui.label("尚未提取文字", 15, ui.ink); transcript.setTextIsSelectable(false);
         transcript.setMovementMethod(LinkMovementMethod.getInstance()); transcript.setHighlightColor(Color.TRANSPARENT); result.addView(transcript);
         root.addView(ui.label("内容成果", 21, ui.ink));
@@ -91,6 +91,8 @@ public final class TextActivity extends Activity {
         ui.action(exports, "导出 Markdown", "适合归档、编辑和电脑端查看", () -> export(31));
         ui.action(exports, "导出 Word", "生成 .docx 文档", () -> export(32));
         ui.action(exports, "导出 PDF", "生成便于阅读和打印的文档", () -> export(33));
+        ui.action(exports, "导出 SRT 字幕", "保留分段时间与发言人标注", () -> export(34));
+        ui.action(exports, "导出 VTT 字幕", "用于网页播放器和视频编辑工具", () -> export(35));
         ui.action(exports, "分享至 Notion / 飞书", "通过系统分享面板发送文字；接收应用可能上传内容", this::share);
         update();
     }
@@ -114,6 +116,7 @@ public final class TextActivity extends Activity {
                 catch (Exception e) { handler.post(() -> { loading = false; revision = name; toast("无法解密文字记录，请检查密钥和文件"); }); }
             });
         }
+        updatePlayback();
     }
     private void refreshCategoryPolicy() {
         categoryName = CategoryStore.name(this, CategoryStore.categoryFor(this, session)); categoryAiAllowed = CategoryStore.aiAllowed(this, session);
@@ -144,7 +147,7 @@ public final class TextActivity extends Activity {
         if (!doc.getBoolean("complete")) text.append("部分录音：只包含已保存片段\n\n");
         if (doc.optBoolean("previewSkipped")) text.append("实时预览漏掉了部分片段；可重新进行完整转写。\n\n");
         JSONArray lines = doc.getJSONArray("segments");
-        focusOffset = -1;
+        focusOffset = -1; highlightOffset = -1;
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.getJSONObject(i); String time = Transcript.time(line.getDouble("start")); int begin = text.length();
             text.append(time);
@@ -157,9 +160,11 @@ public final class TextActivity extends Activity {
                 .append(Transcript.speaker(doc, line.getInt("speaker")));
             if (line.optBoolean("overlap")) text.append("（重叠语音，归属待核对）");
             text.append("：").append(line.getString("text")).append('\n');
-            if (i == focusSegment) {
-                focusOffset = begin;
-                text.setSpan(new BackgroundColorSpan(ui.soft), begin, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (i == focusSegment) focusOffset = begin;
+            if (i == (player != null ? activePlaybackSegment : focusSegment)) {
+                highlightOffset = begin;
+                int color = player != null ? (ui.accent & 0x00ffffff) | 0x44000000 : ui.soft;
+                text.setSpan(new BackgroundColorSpan(color), begin, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
         }
         return text.length() == 0 ? "尚未提取文字" : text;
@@ -257,12 +262,19 @@ public final class TextActivity extends Activity {
     }
     private void export(int format) {
         if (!editable() || document == null) return;
-        String title = format == 31 ? "Markdown" : format == 32 ? "Word" : "PDF";
+        boolean subtitle = format == 34 || format == 35;
+        if (subtitle) try { TextExporter.subtitles(document, format == 35); }
+        catch (Exception e) { toast("尚无有效字幕片段，请先提取或修正转写文字"); return; }
+        String title = format == 31 ? "Markdown" : format == 32 ? "Word" : format == 33 ? "PDF" : format == 34 ? "SRT 字幕" : "VTT 字幕";
+        String subtitleNotice = subtitle && (!document.optBoolean("complete", false) || document.optBoolean("previewSkipped"))
+            ? "\n\n这份文字来自部分录音或实时预览有漏段，字幕也会缺少相应内容；建议先运行完整转写。" : "";
         new AlertDialog.Builder(this).setTitle("导出" + title)
-            .setMessage("导出文件包含转写、发言人和已生成成果，且为未加密明文。请只保存到你控制的位置。")
+            .setMessage(subtitle ? "字幕按已有转写片段的开始和结束时间生成，可能包含识别误差、发言人误分和较长片段；不推测逐字时间。导出文件是未加密明文，请核对内容并保存到受控位置。"
+                + subtitleNotice : "导出文件包含转写、发言人和已生成成果，且为未加密明文。请只保存到你控制的位置。")
             .setNegativeButton("取消", null).setPositiveButton("选择保存位置", (d, w) -> {
-                String extension = format == 31 ? ".md" : format == 32 ? ".docx" : ".pdf";
-                String mime = format == 31 ? "text/markdown" : format == 32 ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf";
+                String extension = format == 31 ? ".md" : format == 32 ? ".docx" : format == 33 ? ".pdf" : format == 34 ? ".srt" : ".vtt";
+                String mime = format == 31 ? "text/markdown" : format == 32 ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    : format == 33 ? "application/pdf" : "text/plain";
                 startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                     .setType(mime).putExtra(Intent.EXTRA_TITLE, "录音文字-" + session.substring(0, 8) + extension), format);
             }).show();
@@ -286,7 +298,7 @@ public final class TextActivity extends Activity {
             })).show();
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
-        super.onActivityResult(request, result, data); if ((request < 31 || request > 33) || result != RESULT_OK || data == null || data.getData() == null) return;
+        super.onActivityResult(request, result, data); if ((request < 31 || request > 35) || result != RESULT_OK || data == null || data.getData() == null) return;
         io.execute(() -> {
             byte[] text = null;
             try {
@@ -295,7 +307,8 @@ public final class TextActivity extends Activity {
                     if (out == null) throw new java.io.IOException();
                     if (request == 31) { text = TextExporter.markdown(doc).getBytes(StandardCharsets.UTF_8); out.write(text); }
                     else if (request == 32) TextExporter.writeDocx(doc, out);
-                    else TextExporter.writePdf(this, doc, out);
+                    else if (request == 33) TextExporter.writePdf(this, doc, out);
+                    else { text = TextExporter.subtitles(doc, request == 35).getBytes(StandardCharsets.UTF_8); out.write(text); }
                     out.flush();
                 }
                 handler.post(() -> toast("文字与成果已导出"));
@@ -322,6 +335,7 @@ public final class TextActivity extends Activity {
                             if (generation != playbackGeneration) return;
                             media.seekTo((int) Math.min(Integer.MAX_VALUE, seconds * 1000)); media.start();
                             playbackStatus.setText("正在回听 " + Transcript.time(seconds) + " · 点击停止");
+                            updatePlayback();
                         });
                         player.setOnCompletionListener(media -> stopPlayback());
                         player.setOnErrorListener((media, what, extra) -> { stopPlayback(); toast("回放失败，请检查本地音频"); return true; }); player.prepareAsync();
@@ -333,12 +347,41 @@ public final class TextActivity extends Activity {
             }
         });
     }
+    private void updatePlayback() {
+        if (player == null || document == null) return;
+        try {
+            if (!player.isPlaying()) return;
+            double position = player.getCurrentPosition() / 1000.0;
+            playbackStatus.setText("正在回听 " + Transcript.time(position) + " · 点击停止");
+            int segment = Transcript.segmentAt(document, position);
+            if (segment == activePlaybackSegment) return;
+            activePlaybackSegment = segment;
+            transcript.setText(transcriptSpans(document));
+            if (segment >= 0) transcript.post(this::followPlaybackSegment);
+        } catch (Exception e) { stopPlayback(); }
+    }
+    private void followPlaybackSegment() {
+        if (activePlaybackSegment < 0 || highlightOffset < 0 || transcript.getLayout() == null || isDestroyed()) return;
+        int line = transcript.getLayout().getLineForOffset(highlightOffset);
+        int[] transcriptAt = new int[2], pageAt = new int[2];
+        transcript.getLocationOnScreen(transcriptAt); pageScroll.getLocationOnScreen(pageAt);
+        int top = transcriptAt[1] + transcript.getLayout().getLineTop(line);
+        int bottom = transcriptAt[1] + transcript.getLayout().getLineBottom(line);
+        int visibleTop = pageAt[1] + ui.dp(90), visibleBottom = pageAt[1] + pageScroll.getHeight() - ui.dp(60);
+        if (top < visibleTop) pageScroll.smoothScrollBy(0, top - visibleTop);
+        else if (bottom > visibleBottom) pageScroll.smoothScrollBy(0, bottom - visibleBottom);
+    }
     private void stopPlayback() {
         playbackGeneration++;
+        boolean hadPlayback = player != null || activePlaybackSegment >= 0;
         if (player != null) { try { player.release(); } catch (Exception ignored) {} player = null; }
         if (playbackSource != null) { playbackSource.close(); playbackSource = null; }
         MainActivity.playbackActive = false;
-        if (playbackStatus != null) playbackStatus.setText("点击蓝色时间点回听对应录音");
+        activePlaybackSegment = -1;
+        if (hadPlayback) {
+            try { if (document != null && transcript != null) transcript.setText(transcriptSpans(document)); } catch (Exception ignored) {}
+        }
+        if (playbackStatus != null) playbackStatus.setText("点击蓝色时间点回听；播放时高亮当前片段");
     }
     private void toast(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show(); }
 }

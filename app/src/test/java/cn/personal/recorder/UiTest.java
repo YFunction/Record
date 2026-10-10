@@ -55,7 +55,7 @@ public class UiTest {
         Bitmap bitmap = Bitmap.createBitmap(1179, 2556, Bitmap.Config.ARGB_8888); view.draw(new Canvas(bitmap));
         File directory = new File("build/reports/ui"); assertTrue(directory.isDirectory() || directory.mkdirs());
         try (FileOutputStream out = new FileOutputStream(new File(directory, name + ".png"))) { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)); }
-        if (name.endsWith("settings")) {
+        if (name.endsWith("settings") || name.equals("light-text")) {
             android.widget.ScrollView scroll = (android.widget.ScrollView) ((ViewGroup) view).getChildAt(0);
             scroll.scrollTo(0, scroll.getChildAt(0).getHeight() - scroll.getHeight());
             bitmap.eraseColor(activity.getColor(R.color.background)); view.draw(new Canvas(bitmap));
@@ -169,6 +169,7 @@ public class UiTest {
             TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             assertNotNull(find(activity, "本地提取文字")); assertNotNull(find(activity, "生成 AI 总结"));
             assertNotNull(find(activity, "生成大纲")); assertNotNull(find(activity, "生成思维导图"));
+            assertNotNull(find(activity, "导出 SRT 字幕")); assertNotNull(find(activity, "导出 VTT 字幕"));
             assertNull(shadowOf(activity).getNextStartedService()); assertFalse(shadowOf(activity).getShowWhenLocked());
             render(activity, "light-text");
         }

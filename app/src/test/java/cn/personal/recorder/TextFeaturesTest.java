@@ -47,6 +47,34 @@ public class TextFeaturesTest {
         assertTrue(markdown.contains("00:00:03")); assertTrue(markdown.contains("小王")); assertTrue(markdown.contains("待办"));
         assertTrue(markdown.contains("## 大纲")); assertTrue(markdown.contains("- 会议"));
     }
+    @Test public void subtitlesPreserveSegmentBoundariesAndSpeakerLabels() throws Exception {
+        JSONObject doc = Transcript.create("record-id", true); doc.getJSONObject("names").put("0", "小王");
+        doc.getJSONArray("segments")
+            .put(new JSONObject().put("start", 1.25).put("end", 3.5).put("speaker", 0).put("text", "第一句\n项目 <A>"))
+            .put(new JSONObject().put("start", 3.5).put("end", 4.75).put("speaker", -1).put("text", "second & 中文"))
+            .put(new JSONObject().put("start", 6).put("end", 6).put("speaker", 0).put("text", "无效时间"))
+            .put(new JSONObject().put("start", 7).put("end", 8).put("speaker", 0).put("text", "  "));
+        String srt = TextExporter.subtitles(doc, false);
+        assertTrue(srt.startsWith("1\n00:00:01,250 --> 00:00:03,500\n小王：第一句 项目 <A>\n\n"));
+        assertTrue(srt.contains("2\n00:00:03,500 --> 00:00:04,750\nsecond & 中文\n\n"));
+        assertFalse(srt.contains("无效时间")); assertFalse(srt.contains("\n3\n"));
+        String vtt = TextExporter.subtitles(doc, true);
+        assertTrue(vtt.startsWith("WEBVTT\n\n00:00:01.250 --> 00:00:03.500\n小王：第一句 项目 &lt;A&gt;\n\n"));
+        assertTrue(vtt.contains("00:00:03.500 --> 00:00:04.750\nsecond &amp; 中文"));
+    }
+    @Test public void playbackFindsCurrentSegmentWithoutInventingTimingInGaps() throws Exception {
+        JSONObject doc = Transcript.create("record-id", true);
+        doc.getJSONArray("segments")
+            .put(new JSONObject().put("start", 1).put("end", 5).put("speaker", 0).put("text", "甲"))
+            .put(new JSONObject().put("start", 3).put("end", 4).put("speaker", 1).put("text", "乙"))
+            .put(new JSONObject().put("start", 7).put("end", 8).put("speaker", 0).put("text", "丙"));
+        assertEquals(-1, Transcript.segmentAt(doc, 0.9));
+        assertEquals(0, Transcript.segmentAt(doc, 2));
+        assertEquals(1, Transcript.segmentAt(doc, 3.5));
+        assertEquals(0, Transcript.segmentAt(doc, 4.5));
+        assertEquals(-1, Transcript.segmentAt(doc, 5.5));
+        assertEquals(2, Transcript.segmentAt(doc, 7.5));
+    }
     @Test public void wordExportIsAValidPackageAndEscapesXml() throws Exception {
         JSONObject doc = Transcript.create("id", true); doc.getJSONArray("segments")
             .put(new JSONObject().put("start", 0).put("end", 1).put("speaker", 0).put("text", "A < B & 中文"));

@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.json.JSONArray;
@@ -34,6 +35,34 @@ final class TextExporter {
 
     static String plainText(JSONObject doc) throws Exception {
         return markdown(doc).replace("# ", "").replace("## ", "").replace("### ", "");
+    }
+
+    /** Uses existing segment boundaries; no word-level timing is inferred. */
+    static String subtitles(JSONObject doc, boolean webVtt) throws Exception {
+        StringBuilder out = new StringBuilder(webVtt ? "WEBVTT\n\n" : "");
+        JSONArray segments = doc.getJSONArray("segments"); int cue = 0;
+        for (int i = 0; i < segments.length(); i++) {
+            JSONObject line = segments.getJSONObject(i);
+            String words = line.optString("text").replaceAll("[\\p{Cntrl}]+", " ").replaceAll("\\s+", " ").trim();
+            if (words.isEmpty()) continue;
+            double from = line.optDouble("start", Double.NaN), to = line.optDouble("end", Double.NaN);
+            if (!Double.isFinite(from) || !Double.isFinite(to) || from < 0 || to <= from || to >= Long.MAX_VALUE / 1000.0) continue;
+            long start = Math.round(from * 1000), end = Math.max(start + 1, Math.round(to * 1000));
+            cue++; if (!webVtt) out.append(cue).append('\n');
+            out.append(cueTime(start, webVtt)).append(" --> ").append(cueTime(end, webVtt)).append('\n');
+            int speaker = line.optInt("speaker", -1);
+            String caption = (speaker >= 0 ? Transcript.speaker(doc, speaker) + "：" : "") + words;
+            caption = caption.replaceAll("[\\p{Cntrl}]+", " ").replaceAll("\\s+", " ").trim();
+            if (webVtt) caption = caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            out.append(caption).append("\n\n");
+        }
+        if (cue == 0) throw new java.io.IOException("没有可导出的有效字幕片段");
+        return out.toString();
+    }
+    private static String cueTime(long millis, boolean webVtt) {
+        long seconds = millis / 1000;
+        return String.format(Locale.ROOT, "%02d:%02d:%02d%c%03d", seconds / 3600,
+            seconds / 60 % 60, seconds % 60, webVtt ? '.' : ',', millis % 1000);
     }
 
     private static void section(StringBuilder out, String title, String value, String fallback) {
