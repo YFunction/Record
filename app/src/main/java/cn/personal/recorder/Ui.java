@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.view.Gravity;
+import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -104,19 +105,27 @@ final class Ui {
         content.build(this, actions);
         Button close = button("关闭", () -> { }, false);
         panel.addView(close, new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(activity).setView(panel).create();
-        close.setOnClickListener(v -> dialog.dismiss());
-        dialog.setOnShowListener(ignored -> {
-            android.view.Window window = dialog.getWindow();
-            if (window != null) {
-                window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
-                window.setGravity(Gravity.BOTTOM);
-                window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-                WindowManager.LayoutParams attrs = window.getAttributes(); attrs.dimAmount = 0.42f; window.setAttributes(attrs);
+        AlertDialog dialog = new AlertDialog(activity) {
+            @Override protected void onStart() {
+                super.onStart();
+                // AlertDialog may restore its theme's wrap-content width during onStart.
+                // Dialog.show() adds the window only after onStart returns.
+                configureBottomSheetWindow(getWindow());
             }
-        });
+        };
+        dialog.setView(panel);
+        close.setOnClickListener(v -> dialog.dismiss());
+        configureBottomSheetWindow(dialog.getWindow());
         return dialog;
+    }
+    private void configureBottomSheetWindow(Window window) {
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setGravity(Gravity.BOTTOM);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attrs = window.getAttributes(); attrs.dimAmount = 0.42f; window.setAttributes(attrs);
+        }
     }
     interface SheetContent { void build(Ui ui, LinearLayout actions); }
 }

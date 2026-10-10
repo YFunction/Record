@@ -2,6 +2,7 @@ package cn.personal.recorder;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
@@ -11,6 +12,7 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.Gravity;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -88,6 +90,22 @@ public class UiTest {
             assertNull(shadowOf(activity).getNextStartedService()); assertFalse(shadowOf(activity).getShowWhenLocked());
             assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             render(activity, "light-settings");
+        }
+    }
+    @Test public void bottomSheetHasFinalPositionBeforeFirstShow() {
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            AlertDialog dialog = new Ui(controller.get()).bottomSheet("录音详情", "测试录音", (widgets, actions) ->
+                widgets.action(actions, "查看文字与成果", "转写和总结", () -> {}));
+            WindowManager.LayoutParams before = dialog.getWindow().getAttributes();
+            assertEquals(Gravity.BOTTOM, before.gravity);
+            assertEquals(WindowManager.LayoutParams.MATCH_PARENT, before.width);
+            assertEquals(WindowManager.LayoutParams.WRAP_CONTENT, before.height);
+            assertEquals(0.42f, before.dimAmount, 0.001f);
+            dialog.show();
+            WindowManager.LayoutParams shown = dialog.getWindow().getAttributes();
+            assertEquals(Gravity.BOTTOM, shown.gravity);
+            assertEquals(WindowManager.LayoutParams.MATCH_PARENT, shown.width);
+            dialog.dismiss();
         }
     }
     @Test @Config(qualifiers = "w393dp-h852dp-night-xxhdpi") public void darkSettingsUsesDarkResources() throws Exception {
