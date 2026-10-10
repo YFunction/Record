@@ -18,6 +18,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.Test;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -106,6 +107,24 @@ public class UiTest {
             assertEquals(Gravity.BOTTOM, shown.gravity);
             assertEquals(WindowManager.LayoutParams.MATCH_PARENT, shown.width);
             dialog.dismiss();
+        }
+    }
+    @Test public void liveTextIsHiddenWhenPhoneLocks() throws Exception {
+        String session = "10000000-0000-4000-8000-000000000001";
+        RecordingService.active = true; RecordingService.session = session;
+        LiveTranscriber.snapshot = new LiveTranscriber.Snapshot(session, "00:00:00  私密测试文字", "实时预览", true);
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            controller.visible().windowFocusChanged(true);
+            MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
+            TextView preview = find(activity, "00:00:00  私密测试文字");
+            assertNotNull(preview); assertEquals(View.VISIBLE, preview.getVisibility());
+            render(activity, "live-home");
+            shadowOf(activity.getSystemService(KeyguardManager.class)).setKeyguardLocked(true);
+            shadowOf(Looper.getMainLooper()).idleFor(1, TimeUnit.SECONDS);
+            assertEquals(View.GONE, ((View) ((View) preview.getParent()).getParent()).getVisibility());
+        } finally {
+            RecordingService.active = false; RecordingService.session = "";
+            LiveTranscriber.snapshot = new LiveTranscriber.Snapshot("", "", "", false);
         }
     }
     @Test @Config(qualifiers = "w393dp-h852dp-night-xxhdpi") public void darkSettingsUsesDarkResources() throws Exception {

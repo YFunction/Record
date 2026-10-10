@@ -56,7 +56,7 @@ public final class TextActivity extends Activity {
         LinearLayout actions = ui.card(root); actions.addView(ui.title("录音文字", 18));
         status = ui.label("读取加密记录…", 13, ui.muted); actions.addView(status);
         extract = ui.button("本地提取文字", this::extract, true); actions.addView(extract, ui.spaced());
-        actions.addView(ui.label("录音结束后离线识别，仅处理本应用录制的音频；当前不支持边录边转或导入外部音频。", 12, ui.muted));
+        actions.addView(ui.label("录音时可在首页预览实时文字；停止后可在此进行更完整的离线转写与发言人区分。当前不支持导入外部音频。", 12, ui.muted));
         ui.action(actions, "取消当前处理", "保留已有结果；已发送的 AI 请求仍可能计费", () -> { if (AnalysisService.busy) startService(new Intent(this, AnalysisService.class).setAction(AnalysisService.CANCEL)); });
         ui.action(actions, "文字与 AI 设置", "离线模型、DeepSeek Key", () -> startActivity(new Intent(this, SettingsActivity.class)));
         LinearLayout result = ui.card(root); result.addView(ui.title("录音文字", 18));
@@ -89,12 +89,14 @@ public final class TextActivity extends Activity {
     @Override protected void onPause() { handler.removeCallbacks(refresh); stopPlayback(); super.onPause(); }
     @Override protected void onDestroy() { stopPlayback(); io.shutdown(); super.onDestroy(); }
     private void update() {
-        boolean busy = AnalysisService.busy || changing || loading; boolean aiAllowed = categoryAiAllowed;
+        boolean liveBusy = LiveTranscriber.isBusyFor(session);
+        boolean busy = AnalysisService.busy || liveBusy || changing || loading; boolean aiAllowed = categoryAiAllowed;
         boolean canGenerate = !busy && document != null && aiAllowed;
         extract.setEnabled(!busy && !RecordingService.active); summarize.setEnabled(canGenerate); makeOutline.setEnabled(canGenerate); makeMindMap.setEnabled(canGenerate);
         extract.setAlpha(extract.isEnabled() ? 1f : 0.45f); summarize.setAlpha(summarize.isEnabled() ? 1f : 0.45f);
         makeOutline.setAlpha(makeOutline.isEnabled() ? 1f : 0.45f); makeMindMap.setAlpha(makeMindMap.isEnabled() ? 1f : 0.45f);
-        if (AnalysisService.busy) status.setText(AnalysisService.session.isEmpty() || session.equals(AnalysisService.session) ? AnalysisService.state : "正在处理另一场录音");
+        if (liveBusy) status.setText("正在加密保存实时文字，请稍后再进行完整转写或总结");
+        else if (AnalysisService.busy) status.setText(AnalysisService.session.isEmpty() || session.equals(AnalysisService.session) ? AnalysisService.state : "正在处理另一场录音");
         else status.setText(!aiAllowed ? "本分类禁止向外部 AI 发送文字 · 可在设置 → 分类管理中更改" : (!AnalysisService.state.isEmpty() && (session.equals(AnalysisService.session) || AnalysisService.session.isEmpty()) ? AnalysisService.state : "文字与总结在手机加密保存，按云端设置同步"));
         File file = TextStore.latest(this, session); String name = file == null ? "none" : file.getName();
         if (!loading && !changing && !name.equals(revision) && !io.isShutdown()) {
@@ -118,6 +120,7 @@ public final class TextActivity extends Activity {
     private CharSequence transcriptSpans(JSONObject doc) throws Exception {
         SpannableStringBuilder text = new SpannableStringBuilder();
         if (!doc.getBoolean("complete")) text.append("部分录音：只包含已保存片段\n\n");
+        if (doc.optBoolean("previewSkipped")) text.append("实时预览漏掉了部分片段；可重新进行完整转写。\n\n");
         JSONArray lines = doc.getJSONArray("segments");
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.getJSONObject(i); String time = Transcript.time(line.getDouble("start")); int begin = text.length();
@@ -153,7 +156,7 @@ public final class TextActivity extends Activity {
         org.json.JSONArray children = node.optJSONArray("children");
         if (children != null) for (int i = 0; i < children.length(); i++) addMindMapNode(parent, children.getJSONObject(i), depth + 1, count);
     }
-    private boolean editable() { if (AnalysisService.busy || changing || loading) { toast("请等待当前处理完成"); return false; } return true; }
+    private boolean editable() { if (AnalysisService.busy || LiveTranscriber.isBusyFor(session) || changing || loading) { toast("请等待当前处理完成"); return false; } return true; }
     private void start(String action) {
         start(action, -1);
     }

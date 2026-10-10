@@ -27,8 +27,10 @@ final class AacRecorder {
         context = c; key = new Vault(c).recordingKey();
         CategoryStore.assign(c, session, categoryId == null ? CategoryStore.defaultId(c) : categoryId);
     }
+    String sessionId() { return session; }
+    interface PcmSink { void accept(byte[] pcm, int count); }
     void stop() { stop = true; }
-    void run(Runnable onChunk, Runnable onStarted) throws Exception {
+    void run(Runnable onChunk, Runnable onStarted, PcmSink liveText) throws Exception {
         if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED)
             throw new SecurityException("麦克风权限未授予");
         int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
@@ -60,6 +62,9 @@ final class AacRecorder {
                     ByteBuffer buffer = codec.getInputBuffer(input);
                     int count = record.read(pcm, 0, Math.min(pcm.length, buffer.capacity()) & ~1, AudioRecord.READ_BLOCKING);
                     if (count <= 0) throw new IllegalStateException("麦克风读取失败：" + count);
+                    if (liveText != null) {
+                        try { liveText.accept(pcm, count); } catch (RuntimeException ignored) { /* Preview cannot interrupt recording. */ }
+                    }
                     buffer.clear(); buffer.put(pcm, 0, count);
                     codec.queueInputBuffer(input, 0, count, samples * 1_000_000L / RATE, 0);
                     samples += count / 2;

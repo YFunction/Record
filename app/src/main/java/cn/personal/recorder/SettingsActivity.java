@@ -32,7 +32,7 @@ public final class SettingsActivity extends Activity {
     private Vault vault;
     private TextView storage, pending, keyStatus;
     private ProgressBar capacity;
-    private Switch cloud, wifi;
+    private Switch cloud, wifi, liveSwitch;
     private boolean refreshing;
     private boolean modelsReady;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -98,6 +98,10 @@ public final class SettingsActivity extends Activity {
         LinearLayout ai = ui.card(root); ai.addView(ui.title("文字与 AI", 17));
         modelsReady = ModelManager.ready(this);
         ui.action(ai, "离线文字与发言人模型", modelsReady ? "已安装 · 可离线提取" : "首次需下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0), this::speechModels);
+        liveSwitch = toggle(ai, "录音时实时显示文字", "本机约每 5 秒识别一次，停止后加密保存；需先安装离线模型",
+            vault.preferences().getBoolean("live-transcription-enabled", true),
+            enabled -> { if (!editable()) { rebuildLater(); return; }
+                vault.preferences().edit().putBoolean("live-transcription-enabled", enabled).apply(); });
         ui.action(ai, "开源模型与许可", "SenseVoiceSmall、pyannote、3D-Speaker", this::modelNotices);
         ui.action(ai, "DeepSeek Key", vault.aiConfigured() ? "已加密保存 · 点击修改" : "由你提供，仅用于文字总结", this::configureAi);
         ai.addView(ui.label("离线转写采用 auto 语言模式，中英混说效果需在目标手机验证。DeepSeek V4.1 Flash 仅在分类允许且你逐场确认后接收文字；服务商会读取内容。", 12, ui.muted));
@@ -156,7 +160,7 @@ public final class SettingsActivity extends Activity {
     }
     private void refreshInfo() {
         if (modelsReady != ModelManager.ready(this)) { buildScreen(); return; }
-        cloud.setEnabled(!RecordingService.active); wifi.setEnabled(!RecordingService.active);
+        cloud.setEnabled(!RecordingService.active); wifi.setEnabled(!RecordingService.active); liveSwitch.setEnabled(!RecordingService.active);
         keyStatus.setText(vault.preferences().getBoolean("backed-up", false) ? "恢复密钥已备份" : "尚未备份 · 建议尽早保存独立副本");
         if (refreshing || io.isShutdown()) return; refreshing = true;
         io.execute(() -> {
@@ -185,6 +189,7 @@ public final class SettingsActivity extends Activity {
         })); dialog.show();
     }
     private void speechModels() {
+        if (RecordingService.active) { toast("请先停止录音再更新离线模型"); return; }
         if (AnalysisService.busy) { toast(AnalysisService.state); return; }
         new AlertDialog.Builder(this).setTitle("离线文字与发言人模型")
             .setMessage("下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0) + "，安装需约 700 MB 可用空间，建议使用 Wi-Fi。模型安装后可断网转写，不上传音频。也可先从版本发布页下载模型 ZIP，再导入。")
@@ -261,6 +266,7 @@ public final class SettingsActivity extends Activity {
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         Uri destination = data.getData();
         if (request == 24) {
+            if (RecordingService.active) { toast("请先停止录音再更新离线模型"); return; }
             if (AnalysisService.busy) { toast("请先结束当前处理"); return; }
             try { getContentResolver().takePersistableUriPermission(destination, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException ignored) { }
             try { startForegroundService(new Intent(this, AnalysisService.class).setAction(AnalysisService.IMPORT).setData(destination)); }

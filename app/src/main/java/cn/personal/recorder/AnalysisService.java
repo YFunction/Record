@@ -31,6 +31,8 @@ public final class AnalysisService extends Service {
         String action = intent.getAction(), recording = intent.getStringExtra("session");
         if (!TRANSCRIBE.equals(action) && !SUMMARY.equals(action) && !OUTLINE.equals(action) && !MINDMAP.equals(action) && !MODELS.equals(action) && !IMPORT.equals(action)) { stopSelf(); return START_NOT_STICKY; }
         if ((TRANSCRIBE.equals(action) || SUMMARY.equals(action) || OUTLINE.equals(action) || MINDMAP.equals(action)) && !TextStore.validSession(recording)) { stopSelf(); return START_NOT_STICKY; }
+        if (LiveTranscriber.isBusyFor(recording)) { state = "实时文字仍在保存，请稍后重试"; stopSelf(); return START_NOT_STICKY; }
+        if ((MODELS.equals(action) || IMPORT.equals(action)) && RecordingService.active) { state = "请先停止录音再更新离线模型"; stopSelf(); return START_NOT_STICKY; }
         if (TRANSCRIBE.equals(action) && RecordingService.active) { state = "请先停止录音再提取文字"; stopSelf(); return START_NOT_STICKY; }
         busy = true; transcribing = TRANSCRIBE.equals(action); session = recording == null ? "" : recording; cancelled.set(false);
         try {
