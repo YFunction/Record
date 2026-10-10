@@ -18,6 +18,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.io.OutputStream;
@@ -36,9 +37,11 @@ public final class MainActivity extends Activity {
     private Button record;
     private boolean resumed;
     private AlertDialog visibleDialog;
-    private LinearLayout library;
+    private LinearLayout library, categoryRail;
+    private TextView libraryTitle, filterCaption;
     private boolean launchHandled, libraryBusy;
     private static volatile boolean exportBusy;
+    static volatile boolean playbackActive;
     private int ticks, playbackGeneration;
     private String librarySignature = "", exportSession, libraryFilter = "";
     private MediaPlayer player;
@@ -57,9 +60,19 @@ public final class MainActivity extends Activity {
         launchHandled = (saved != null && saved.getBoolean("handled")) || getIntent().getBooleanExtra("settings", false);
         if (saved != null) exportSession = saved.getString("export-session");
         LinearLayout root = ui.screen();
-        LinearLayout header = row(); header.addView(ui.title("录音", 30), new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout header = row(); header.addView(ui.title("声记", 30), new LinearLayout.LayoutParams(0, -2, 1));
         header.addView(button("设置", () -> unlocked(this::settings), false)); root.addView(header);
-        root.addView(label("声音留在当下，记录安心保存", 13, MUTED));
+        root.addView(label("把声音安全地整理成自己的资料", 13, MUTED));
+        LinearLayout categoriesHeader = row();
+        categoriesHeader.addView(ui.title("内容分类", 19), new LinearLayout.LayoutParams(0, -2, 1));
+        categoriesHeader.addView(button("管理", () -> unlocked(() -> startActivity(new Intent(this, CategoryActivity.class))), false));
+        root.addView(categoriesHeader);
+        root.addView(label("按场景浏览录音，点击分类即可筛选", 12, MUTED));
+        HorizontalScrollView categoryScroll = new HorizontalScrollView(this); categoryScroll.setHorizontalScrollBarEnabled(false);
+        categoryRail = row(); categoryRail.setPadding(0, dp(2), 0, dp(2)); categoryScroll.addView(categoryRail);
+        root.addView(categoryScroll);
+        renderCategories(null, java.util.Collections.emptyList());
+        LinearLayout quickHeading = row(); quickHeading.addView(ui.title("快速录音", 19)); root.addView(quickHeading);
         LinearLayout hero = card(root);
         mode = label("本地加密保存", 13, TEAL); mode.setGravity(Gravity.CENTER); hero.addView(mode);
         timer = label("00:00:00", 52, INK); timer.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL); timer.setGravity(Gravity.CENTER);
@@ -68,9 +81,9 @@ public final class MainActivity extends Activity {
         record = button("开始录音", () -> { if (RecordingService.active) stopRecording(); else startRecording(); }, true);
         record.setTextSize(18); record.setMinHeight(dp(72)); hero.addView(record, spaced());
         sync = label("", 12, MUTED); sync.setGravity(Gravity.CENTER); hero.addView(sync);
-        LinearLayout heading = row(); heading.addView(ui.title("最近录音", 19), new LinearLayout.LayoutParams(0, -2, 1));
-        heading.addView(button("分类", () -> unlocked(this::chooseLibraryFilter), false));
+        LinearLayout heading = row(); libraryTitle = ui.title("最近录音", 19); heading.addView(libraryTitle, new LinearLayout.LayoutParams(0, -2, 1));
         heading.addView(button("刷新", () -> { librarySignature = ""; loadLibrary(); }, false)); root.addView(heading);
+        filterCaption = label("全部分类", 12, MUTED); root.addView(filterCaption);
         playing = label("", 13, TEAL); playing.setVisibility(View.GONE); playing.setOnClickListener(v -> releasePlayer()); root.addView(playing);
         library = column(0); root.addView(library); renderLibrary(java.util.Collections.emptyList());
         root.addView(label("录音后可熄屏继续，在通知栏随时停止。", 12, MUTED));
@@ -109,8 +122,10 @@ public final class MainActivity extends Activity {
         mode.setText(vault.cloudEnabled() ? "本地加密 · 云端同步" : "本地加密录音");
 
         sync.setText(!vault.cloudEnabled() ? "每 30 秒加密保存 · 无需网络" : (!vault.configured() ? "完成服务器设置与密钥备份后开始同步" : Uploader.status));
-        if (getSystemService(KeyguardManager.class).isKeyguardLocked()) { library.setVisibility(View.GONE); releasePlayer(); librarySignature = ""; if (visibleDialog != null) visibleDialog.dismiss(); }
-        else library.setVisibility(View.VISIBLE);
+        if (getSystemService(KeyguardManager.class).isKeyguardLocked()) {
+            library.setVisibility(View.GONE); categoryRail.setVisibility(View.GONE); releasePlayer(); librarySignature = "";
+            if (visibleDialog != null) visibleDialog.dismiss();
+        } else { library.setVisibility(View.VISIBLE); categoryRail.setVisibility(View.VISIBLE); }
         if (ticks++ % 3 == 0) loadLibrary();
     }
     private static String duration(long seconds) { return String.format(Locale.ROOT, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60); }
@@ -153,7 +168,10 @@ public final class MainActivity extends Activity {
         launchHandled = true; releasePlayer(); startActivity(new Intent(this, SettingsActivity.class));
     }
     private void showPrivate(AlertDialog.Builder builder) {
-        AlertDialog dialog = builder.create(); visibleDialog = dialog; setShowWhenLocked(false);
+        showPrivate(builder.create());
+    }
+    private void showPrivate(AlertDialog dialog) {
+        visibleDialog = dialog; setShowWhenLocked(false);
         dialog.setOnDismissListener(d -> { if (visibleDialog == dialog) { visibleDialog = null; setShowWhenLocked(true); } });
         dialog.show();
     }
@@ -172,6 +190,8 @@ public final class MainActivity extends Activity {
                 handler.post(() -> {
                     libraryBusy = false; if (isDestroyed()) return;
                     if (getSystemService(KeyguardManager.class).isKeyguardLocked()) return;
+                    renderCategories(catalog, entries);
+                    updateLibraryHeading(catalog);
                     if (!signature.toString().equals(librarySignature) || librarySignature.isEmpty()) { librarySignature = signature.toString(); renderLibrary(entries); }
                 });
             } catch (Exception e) { handler.post(() -> { libraryBusy = false; toast("无法读取本地录音"); }); }
@@ -188,8 +208,8 @@ public final class MainActivity extends Activity {
             LinearLayout item = card(library); item.setPadding(dp(16), dp(10), dp(16), dp(10));
             item.addView(label(new SimpleDateFormat("MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time)), 17, INK));
             item.addView(label(entry.categoryName, 12, TEAL));
-            String saved = entry.chunks.length == 0 ? "文字与总结" : entry.uploaded == entry.chunks.length ? "云端已保存" : "本地已加密";
-            item.addView(label(entry.chunks.length == 0 ? "转写与总结已加密 · 点击查看  ›" : String.format(Locale.CHINA, "%s · %.1f MB · 播放 / 文字  ›", saved, entry.bytes / 1048576.0), 12, MUTED));
+            String saved = entry.chunks.length == 0 ? "文字与成果" : entry.uploaded == entry.chunks.length ? "云端已保存" : "本地已加密";
+            item.addView(label(entry.chunks.length == 0 ? "转写与 AI 成果已加密 · 点击查看  ›" : String.format(Locale.CHINA, "%s · %.1f MB · 播放 / 成果  ›", saved, entry.bytes / 1048576.0), 12, MUTED));
             item.setContentDescription("录音 " + new java.util.Date(entry.time) + "，点击查看文字、播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
         }
         if (visible.size() > 20) library.addView(button("查看更早录音（共 " + visible.size() + " 场）", () -> unlocked(() -> {
@@ -197,44 +217,87 @@ public final class MainActivity extends Activity {
             showPrivate(new AlertDialog.Builder(this).setTitle("全部本地录音").setItems(names, (d, w) -> recordingActions(visible.get(w))).setNegativeButton("关闭", null));
         }), false));
     }
-    private void chooseLibraryFilter() {
-        try {
-            CategoryStore.State catalog = CategoryStore.load(this); String[] names = new String[catalog.size() + 1]; String[] ids = new String[names.length];
-            names[0] = "全部分类"; ids[0] = "";
-            for (int i = 0; i < catalog.size(); i++) { org.json.JSONObject c = catalog.category(i); names[i + 1] = c.optString("name"); ids[i + 1] = c.optString("id"); }
-            int selected = 0; for (int i = 0; i < ids.length; i++) if (ids[i].equals(libraryFilter)) selected = i;
-            new AlertDialog.Builder(this).setTitle("按分类筛选").setSingleChoiceItems(names, selected, (d, which) -> { libraryFilter = ids[which]; librarySignature = ""; d.dismiss(); loadLibrary(); }).setNegativeButton("关闭", null).show();
-        } catch (Exception e) { toast("无法读取分类"); }
+    private void renderCategories(CategoryStore.State catalog, List<RecordingLibrary.Entry> entries) {
+        if (categoryRail == null) return;
+        categoryRail.removeAllViews();
+        java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+        for (RecordingLibrary.Entry entry : entries) counts.put(entry.categoryId, counts.getOrDefault(entry.categoryId, 0) + 1);
+        int total = entries.size();
+        addCategoryTile("全部录音", total, "", true);
+        if (catalog == null) {
+            try { catalog = CategoryStore.load(this); } catch (Exception e) { return; }
+        }
+        for (int i = 0; i < catalog.size(); i++) {
+            org.json.JSONObject category = catalog.category(i); if (category == null) continue;
+            String id = category.optString("id");
+            addCategoryTile(category.optString("name", "未分类"), counts.getOrDefault(id, 0), id, false);
+        }
+    }
+    private void addCategoryTile(String name, int count, String id, boolean all) {
+        LinearLayout tile = ui.categoryTile(name, count + " 场", all ? libraryFilter.isEmpty() : id.equals(libraryFilter), () -> {
+            if (!id.equals(libraryFilter)) { libraryFilter = id; librarySignature = ""; loadLibrary(); }
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(142), dp(82)); params.rightMargin = dp(10);
+        categoryRail.addView(tile, params);
+    }
+    private void updateLibraryHeading(CategoryStore.State catalog) {
+        if (libraryTitle == null || filterCaption == null) return;
+        if (libraryFilter.isEmpty()) { libraryTitle.setText("最近录音"); filterCaption.setText("显示全部分类"); return; }
+        String name = catalog.name(libraryFilter); libraryTitle.setText(name); filterCaption.setText("当前分类 · " + name + "　·　点击“全部录音”重置");
     }
     private void recordingActions(RecordingLibrary.Entry entry) {
         if (!editable()) return;
-        showPrivate(new AlertDialog.Builder(this).setTitle("本地录音 · " + entry.categoryName).setItems(new String[]{"更改分类", "文字与 AI 总结", "播放（内存解密）", "导出 AAC 音频", "删除本地录音与文字"}, (d, w) -> {
-            if (w == 0) changeCategory(entry);
-            else if (w == 1) { releasePlayer(); startActivity(new Intent(this, TextActivity.class).putExtra("session", entry.id)); }
-            else if (w == 2) { if (entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看"); else play(entry); }
-            else if (w == 3 && entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看");
-            else if (w == 3) showPrivate(new AlertDialog.Builder(this).setTitle("导出音频").setMessage("导出的 AAC 文件是明文，可由其他播放器打开。请选择你控制的保存位置。意外中断的录音只导出已保存的连续片段。")
-                .setNegativeButton("取消", null).setPositiveButton("选择位置", (dialog, which) -> { exportSession = entry.id;
-                    startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/aac")
-                        .putExtra(Intent.EXTRA_TITLE, "录音-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new java.util.Date(entry.time)) + ".aac"), 21); }));
-            else showPrivate(new AlertDialog.Builder(this).setTitle("删除本地录音与文字？").setMessage("这会删除本场音频、转写和总结的手机副本。未上传内容将无法恢复，云端副本不会删除。")
-                .setNegativeButton("取消", null).setPositiveButton("删除", (dialog, which) -> { if (!editable()) return; releasePlayer();
-                    if (AnalysisService.busy) { toast("请等待文字处理结束后再删除"); return; }
-                    io.execute(() -> { boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok; boolean result = ok; handler.post(() -> { librarySignature = ""; loadLibrary(); toast(result ? "本地录音与文字已删除" : "部分文件删除失败，请重试"); }); }); }));
-        }).setNegativeButton("关闭", null));
+        String date = new SimpleDateFormat("yyyy年MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time));
+        final AlertDialog[] sheet = new AlertDialog[1];
+        sheet[0] = ui.bottomSheet("录音详情", entry.categoryName + "  ·  " + date, (widgets, actions) -> {
+            widgets.action(actions, "查看文字与成果", "转写、AI 总结、大纲和思维导图", () -> { sheet[0].dismiss(); releasePlayer(); startActivity(new Intent(this, TextActivity.class).putExtra("session", entry.id)); });
+            widgets.action(actions, "更改所属分类", "将这场录音移入其他内容分类", () -> { sheet[0].dismiss(); changeCategory(entry); });
+            widgets.action(actions, "播放录音", entry.chunks.length == 0 ? "手机音频已清理，仅保留文字成果" : "在手机内存中解密播放", () -> { sheet[0].dismiss(); if (entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看"); else play(entry); });
+            widgets.action(actions, "导出 AAC 音频", entry.chunks.length == 0 ? "本地音频已清理" : "导出文件为明文，请保存到受控位置", () -> {
+                sheet[0].dismiss();
+                if (entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看");
+                else showPrivate(new AlertDialog.Builder(this).setTitle("导出音频").setMessage("导出的 AAC 文件是明文，可由其他播放器打开。请选择你控制的保存位置。意外中断的录音只导出已保存的连续片段。")
+                    .setNegativeButton("取消", null).setPositiveButton("选择位置", (dialog, which) -> {
+                        exportSession = entry.id;
+                        startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/aac")
+                            .putExtra(Intent.EXTRA_TITLE, "录音-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new java.util.Date(entry.time)) + ".aac"), 21);
+                    }));
+            });
+            widgets.action(actions, "删除本地资料", "删除音频、转写、总结和生成成果", () -> {
+                sheet[0].dismiss(); showPrivate(new AlertDialog.Builder(this).setTitle("删除本地录音与文字？").setMessage("这会删除本场音频、转写和总结的手机副本。未上传内容将无法恢复，云端副本不会删除。")
+                    .setNegativeButton("取消", null).setPositiveButton("删除", (dialog, which) -> {
+                        if (!editable()) return; releasePlayer();
+                        if (AnalysisService.busy) { toast("请等待文字处理结束后再删除"); return; }
+                        io.execute(() -> {
+                            boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok; boolean result = ok;
+                            handler.post(() -> { librarySignature = ""; loadLibrary(); toast(result ? "本地录音与文字已删除" : "部分文件删除失败，请重试"); });
+                        });
+                    }));
+            });
+        });
+        showPrivate(sheet[0]);
     }
     private void changeCategory(RecordingLibrary.Entry entry) {
         try {
             CategoryStore.State catalog = CategoryStore.load(this); String[] names = new String[catalog.size()]; String[] ids = new String[names.length];
             for (int i = 0; i < names.length; i++) { org.json.JSONObject c = catalog.category(i); names[i] = c.optString("name"); ids[i] = c.optString("id"); }
-            new AlertDialog.Builder(this).setTitle("将录音归入分类").setItems(names, (d, which) -> io.execute(() -> {
-                try { CategoryStore.assign(this, entry.id, ids[which]); handler.post(() -> { librarySignature = ""; loadLibrary(); toast("录音已归入“" + names[which] + "”"); }); }
-                catch (Exception e) { handler.post(() -> toast("分类保存失败")); }
-            })).setNegativeButton("取消", null).show();
+            final AlertDialog[] sheet = new AlertDialog[1];
+            sheet[0] = ui.bottomSheet("选择内容分类", "为这场录音重新归类", (widgets, actions) -> {
+                for (int i = 0; i < names.length; i++) {
+                    final int selected = i;
+                    widgets.action(actions, names[i], "", () -> {
+                        io.execute(() -> {
+                            try { CategoryStore.assign(this, entry.id, ids[selected]); handler.post(() -> { if (sheet[0] != null) sheet[0].dismiss(); librarySignature = ""; loadLibrary(); toast("录音已归入“" + names[selected] + "”"); }); }
+                            catch (Exception e) { handler.post(() -> toast("分类保存失败")); }
+                        });
+                    });
+                }
+            });
+            showPrivate(sheet[0]);
         } catch (Exception e) { toast("无法读取分类"); }
     }
     private void play(RecordingLibrary.Entry entry) {
-        releasePlayer(); int generation = playbackGeneration; playing.setText("正在验证并解密录音… 点击取消"); playing.setVisibility(View.VISIBLE);
+        releasePlayer(); playbackActive = true; int generation = playbackGeneration; playing.setText("正在验证并解密录音… 点击取消"); playing.setVisibility(View.VISIBLE);
         io.execute(() -> {
             try {
                 RecordingSource source = new RecordingSource(entry.chunks, vault.recordingKey());
@@ -252,7 +315,7 @@ public final class MainActivity extends Activity {
     }
     private void releasePlayer() {
         playbackGeneration++; if (player != null) { player.release(); player = null; }
-        if (playingSource != null) { playingSource.close(); playingSource = null; } if (playing != null) playing.setVisibility(View.GONE);
+        if (playingSource != null) { playingSource.close(); playingSource = null; } playbackActive = false; if (playing != null) playing.setVisibility(View.GONE);
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);

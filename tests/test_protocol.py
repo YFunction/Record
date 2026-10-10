@@ -253,6 +253,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(self.store.list("")["chunks"], [])
         self.assertEqual(self.request("/v1/chunks/" + name, blob)[0], 201)
 
+    def test_retention_removes_only_expired_ciphertext_objects(self):
+        old_name, old_blob = envelope(self.key, index=0)
+        new_name, new_blob = envelope(self.key, index=1)
+        self.store.put(old_name, old_blob, hashlib.sha256(old_blob).hexdigest())
+        self.store.put(new_name, new_blob, hashlib.sha256(new_blob).hexdigest())
+        with self.store.lock, self.store.db:
+            self.store.db.execute("UPDATE chunks SET stored_at=100 WHERE name=?", (old_name,))
+            self.store.db.execute("UPDATE chunks SET stored_at=200 WHERE name=?", (new_name,))
+
+        self.assertEqual(self.store.purge_expired(150), 1)
+        self.assertFalse((self.store.blobs / old_name).exists())
+        self.assertEqual(self.store.get(new_name)[0], new_blob)
+        self.assertEqual(self.store.used, len(new_blob))
+        with self.assertRaises(StoreError):
+            self.store.get(old_name)
+
     def test_listing_pagination(self):
         with self.store.lock, self.store.db:
             self.store.db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?)",

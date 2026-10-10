@@ -64,6 +64,7 @@ public class UiTest {
         try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
             MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             assertNotNull(find(activity, "设置")); assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音"));
+            assertNotNull(find(activity, "内容分类")); assertNotNull(find(activity, "隐私录音")); assertNotNull(find(activity, "会议记录")); assertNotNull(find(activity, "课堂记录"));
             assertNull(find(activity, "导入连接配置")); assertNull(find(activity, "备份恢复密钥"));
             assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             assertTrue(shadowOf(activity).getShowWhenLocked()); assertTrue(shadowOf(activity).getTurnScreenOn());
@@ -116,6 +117,7 @@ public class UiTest {
         try (ActivityController<TextActivity> controller = Robolectric.buildActivity(TextActivity.class, intent).setup()) {
             TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             assertNotNull(find(activity, "本地提取文字")); assertNotNull(find(activity, "生成 AI 总结"));
+            assertNotNull(find(activity, "生成大纲")); assertNotNull(find(activity, "生成思维导图"));
             assertNull(shadowOf(activity).getNextStartedService()); assertFalse(shadowOf(activity).getShowWhenLocked());
             render(activity, "light-text");
         }

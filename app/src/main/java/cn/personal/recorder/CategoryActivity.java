@@ -75,7 +75,7 @@ public final class CategoryActivity extends Activity {
             template.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("选择总结模板").setSingleChoiceItems(templates, selected[0], (dialog, which) -> { selected[0] = which; template.setText("总结模板：" + templates[which] + "（点击更改）"); dialog.dismiss(); }).setNegativeButton("取消", null).show()); form.addView(template);
         }
         Switch allow = new Switch(this); allow.setText("允许 DeepSeek 读取本分类的文字"); allow.setTextColor(ui.ink); allow.setChecked(existing != null && existing.optBoolean("allowExternalAi")); form.addView(allow);
-        form.addView(ui.label("只影响你手动点击“生成 AI 总结”时的文字发送权限；不会自动上传转写。关闭后，原有总结仍可查看。", 12, ui.muted));
+        form.addView(ui.label("只影响你手动确认后生成总结、大纲或思维导图时的文字发送权限；不会自动上传转写。关闭后，已有成果仍可查看。", 12, ui.muted));
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "新建分类" : "编辑分类").setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {

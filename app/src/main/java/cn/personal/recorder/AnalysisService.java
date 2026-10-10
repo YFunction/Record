@@ -17,7 +17,7 @@ import org.json.JSONObject;
 
 /** User-initiated foreground processing. Requests are never scheduled for AI automatically. */
 public final class AnalysisService extends Service {
-    static final String TRANSCRIBE = "transcribe", SUMMARY = "summary", MODELS = "models", IMPORT = "import", CANCEL = "cancel";
+    static final String TRANSCRIBE = "transcribe", SUMMARY = "summary", OUTLINE = "outline", MINDMAP = "mindmap", MODELS = "models", IMPORT = "import", CANCEL = "cancel";
     static volatile boolean busy, transcribing;
     static volatile String state = "", session = "";
     private final AtomicBoolean cancelled = new AtomicBoolean();
@@ -29,13 +29,13 @@ public final class AnalysisService extends Service {
         if (CANCEL.equals(intent.getAction())) { if (!busy) stopSelf(); else { cancelled.set(true); state = "正在停止处理…"; } return START_NOT_STICKY; }
         if (busy) return START_NOT_STICKY;
         String action = intent.getAction(), recording = intent.getStringExtra("session");
-        if (!TRANSCRIBE.equals(action) && !SUMMARY.equals(action) && !MODELS.equals(action) && !IMPORT.equals(action)) { stopSelf(); return START_NOT_STICKY; }
-        if ((TRANSCRIBE.equals(action) || SUMMARY.equals(action)) && !TextStore.validSession(recording)) { stopSelf(); return START_NOT_STICKY; }
+        if (!TRANSCRIBE.equals(action) && !SUMMARY.equals(action) && !OUTLINE.equals(action) && !MINDMAP.equals(action) && !MODELS.equals(action) && !IMPORT.equals(action)) { stopSelf(); return START_NOT_STICKY; }
+        if ((TRANSCRIBE.equals(action) || SUMMARY.equals(action) || OUTLINE.equals(action) || MINDMAP.equals(action)) && !TextStore.validSession(recording)) { stopSelf(); return START_NOT_STICKY; }
         if (TRANSCRIBE.equals(action) && RecordingService.active) { state = "请先停止录音再提取文字"; stopSelf(); return START_NOT_STICKY; }
         busy = true; transcribing = TRANSCRIBE.equals(action); session = recording == null ? "" : recording; cancelled.set(false);
         try {
             getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("text-processing", "录音文字处理", NotificationManager.IMPORTANCE_LOW));
-            state = TRANSCRIBE.equals(action) ? "准备本地提取文字" : SUMMARY.equals(action) ? "准备 AI 总结" : "准备离线模型";
+            state = TRANSCRIBE.equals(action) ? "准备本地提取文字" : MODELS.equals(action) || IMPORT.equals(action) ? "准备离线模型" : "准备" + resultName(action);
             int type = Build.VERSION.SDK_INT >= 35 && transcribing ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
             startForeground(2, notification(), type);
             wake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "recorder:text-processing"); wake.acquire(60 * 60 * 1000L);
@@ -52,10 +52,11 @@ public final class AnalysisService extends Service {
                     if (!CategoryStore.aiAllowed(this, recording)) throw new java.io.IOException("本分类未允许外部 AI 读取文字，请在分类管理中明确开启");
                     JSONObject doc = TextStore.read(this, recording); if (doc == null) throw new java.io.IOException("请先提取录音文字");
                     String text = (doc.getBoolean("complete") ? "完整录音\n" : "部分录音：未正常结束，仅包含已保存片段\n") + Transcript.text(doc);
-                    String summary = DeepSeekClient.summarize(text, new Vault(this).aiKey(), cancelled::get, this::progress, CategoryStore.template(this, recording)); LocalTranscriber.check(cancelled::get);
-                    doc.put("summary", summary).put("summaryModel", DeepSeekClient.MODEL).put("summaryAt", System.currentTimeMillis()); TextStore.save(this, doc);
+                    String result = DeepSeekClient.generate(text, new Vault(this).aiKey(), cancelled::get, this::progress, CategoryStore.template(this, recording), action); LocalTranscriber.check(cancelled::get);
+                    String field = resultField(action);
+                    doc.put(field, result).put(field + "Model", DeepSeekClient.MODEL).put(field + "At", System.currentTimeMillis()); TextStore.save(this, doc);
                 }
-                state = TRANSCRIBE.equals(action) ? "文字提取完成，已加密保存" : SUMMARY.equals(action) ? "AI 总结完成，已加密保存" : "离线模型已准备好";
+                state = TRANSCRIBE.equals(action) ? "文字提取完成，已加密保存" : MODELS.equals(action) || IMPORT.equals(action) ? "离线模型已准备好" : resultName(action) + "完成，已加密保存";
             } catch (InterruptedException e) { state = "处理已取消，已有记录保留"; }
             catch (OutOfMemoryError e) { state = "手机内存不足，请关闭其他应用后重试"; }
             catch (Exception | LinkageError e) { state = safe(e); }
@@ -63,6 +64,8 @@ public final class AnalysisService extends Service {
         }, "private-text-processing").start();
         return START_NOT_STICKY;
     }
+    private static String resultField(String action) { return SUMMARY.equals(action) ? "summary" : OUTLINE.equals(action) ? "outline" : "mindMap"; }
+    private static String resultName(String action) { return SUMMARY.equals(action) ? "AI 总结" : OUTLINE.equals(action) ? "大纲" : "思维导图"; }
     private void progress(String message) {
         state = message; if (wake != null && !wake.isHeld()) wake.acquire(60 * 60 * 1000L);
         main.post(() -> { if (busy) getSystemService(NotificationManager.class).notify(2, notification()); });

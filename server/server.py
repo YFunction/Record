@@ -123,6 +123,27 @@ class Store:
                 raise StoreError(503, "stored file corrupted")
             return data, row[0]
 
+    def purge_expired(self, cutoff: int) -> int:
+        """Delete indexed ciphertext objects stored before cutoff; never inspect their contents."""
+        removed = 0
+        with self.lock:
+            rows = self.db.execute("SELECT name, size FROM chunks WHERE stored_at < ? ORDER BY stored_at", (cutoff,)).fetchall()
+            for name, size in rows:
+                if not self.name_pattern.fullmatch(name):
+                    continue
+                path = self.blobs / name
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    continue
+                with self.db:
+                    self.db.execute("DELETE FROM chunks WHERE name=? AND stored_at < ?", (name, cutoff))
+                self.used = max(0, self.used - size)
+                removed += 1
+            if removed:
+                sync_directory(self.blobs)
+        return removed
+
     def close(self) -> None:
         self.db.close()
 
@@ -324,7 +345,27 @@ def main():
         raise SystemExit("Set RECORDER_TOKEN to a random token (32-256 URL-safe characters).")
     store = Store(Path(os.environ.get("RECORDER_DATA", "./data")), int(os.environ.get("RECORDER_QUOTA_BYTES", str(10 * 1024**3))))
     server = Server((os.environ.get("RECORDER_BIND", "127.0.0.1"), int(os.environ.get("RECORDER_PORT", "8080"))), store, token)
+    try:
+        retention_days = int(os.environ.get("RECORDER_RETENTION_DAYS", "0"))
+    except ValueError as exc:
+        raise SystemExit("RECORDER_RETENTION_DAYS must be 0 or a positive number of days.") from exc
+    if not 0 <= retention_days <= 36500:
+        raise SystemExit("RECORDER_RETENTION_DAYS must be between 0 and 36500.")
     print(f"Ciphertext store listening on {server.server_address[0]}:{server.server_address[1]}", flush=True)
+    if retention_days:
+        def cleanup_loop():
+            while True:
+                cutoff = int(time.time()) - retention_days * 86400
+                try:
+                    audio = store.purge_expired(cutoff)
+                    documents = server.documents.purge_expired(cutoff)
+                    if audio or documents:
+                        print(f"Retention cleanup removed {audio} audio and {documents} text ciphertext objects.", flush=True)
+                except Exception as exc:
+                    print(f"Retention cleanup failed ({type(exc).__name__}); will retry.", flush=True)
+                time.sleep(3600)
+        threading.Thread(target=cleanup_loop, name="ciphertext-retention", daemon=True).start()
+        print(f"Ciphertext retention enabled: {retention_days} days.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

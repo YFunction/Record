@@ -83,6 +83,7 @@ public final class SettingsActivity extends Activity {
         });
 
         LinearLayout safety = ui.card(root); safety.addView(ui.title("密钥与存储", 17));
+        safety.addView(ui.label("录音、转写和成果在手机本地加密保存；云端服务器只收到密文。AI 总结仅在你逐场确认后发送文字。当前为个人单用户模式，没有成员或角色权限管理。", 12, ui.muted));
         keyStatus = ui.label("", 12, ui.muted); safety.addView(keyStatus);
         ui.action(safety, "备份恢复密钥", "换机或卸载后，用于解密录音", this::exportKey);
         if (!vault.recordingConfigured()) ui.action(safety, "导入已有密钥", "仅首次使用时可导入", this::importKey);
@@ -90,13 +91,16 @@ public final class SettingsActivity extends Activity {
         capacity = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); capacity.setMax(256);
         capacity.setProgressTintList(ColorStateList.valueOf(ui.accent)); safety.addView(capacity);
         ui.action(safety, "清理已上传副本", "未上传片段会保留", this::clearUploaded);
+        int retentionDays = vault.preferences().getInt("local-audio-retention-days", 0);
+        ui.action(safety, "本机已上传音频保留期", retentionLabel(retentionDays), this::chooseRetention);
+        safety.addView(ui.label("自动清理只删除服务器已确认且录音完整的本机音频；手机文字成果保留。本设置不删除或更改服务器密文保留期，服务器可能按 RECORDER_RETENTION_DAYS 独立清理。", 12, ui.muted));
 
         LinearLayout ai = ui.card(root); ai.addView(ui.title("文字与 AI", 17));
         modelsReady = ModelManager.ready(this);
         ui.action(ai, "离线文字与发言人模型", modelsReady ? "已安装 · 可离线提取" : "首次需下载约 " + String.format(Locale.CHINA, "%.0f MB", ModelManager.downloadBytes(this) / 1048576.0), this::speechModels);
         ui.action(ai, "开源模型与许可", "SenseVoiceSmall、pyannote、3D-Speaker", this::modelNotices);
         ui.action(ai, "DeepSeek Key", vault.aiConfigured() ? "已加密保存 · 点击修改" : "由你提供，仅用于文字总结", this::configureAi);
-        ai.addView(ui.label("V4.1 Flash · 本地转写。生成总结前需本分类已允许 AI，并由你逐场确认；仅发送文字，服务商会读取内容。", 12, ui.muted));
+        ai.addView(ui.label("离线转写采用 auto 语言模式，中英混说效果需在目标手机验证。DeepSeek V4.1 Flash 仅在分类允许且你逐场确认后接收文字；服务商会读取内容。", 12, ui.muted));
         ui.action(ai, "清除 DeepSeek Key", "不影响录音、文字和已有总结", () -> {
             if (AnalysisService.busy) { toast("请先结束当前文字处理"); return; }
             new AlertDialog.Builder(this).setTitle("清除手机上的 Key？").setNegativeButton("取消", null).setPositiveButton("清除", (d, w) -> { vault.removeAiKey(); buildScreen(); }).show();
@@ -124,6 +128,32 @@ public final class SettingsActivity extends Activity {
     @Override protected void onDestroy() { io.shutdown(); super.onDestroy(); }
     private void rebuildLater() { handler.post(() -> { if (!isDestroyed()) buildScreen(); }); }
     private boolean editable() { if (RecordingService.active) { toast("请先停止录音再修改此设置"); return false; } return true; }
+    private static String retentionLabel(int days) {
+        if (days == 30) return "30 天 · 当前设置";
+        if (days == 90) return "90 天 · 当前设置";
+        if (days == 180) return "180 天 · 当前设置";
+        return "手动清理 · 默认保留";
+    }
+    private void chooseRetention() {
+        if (!editable() || AnalysisService.busy) { if (AnalysisService.busy) toast("请等待文字处理完成"); return; }
+        String[] choices = {"手动清理（默认保留）", "上传成功后 30 天清理本机音频", "上传成功后 90 天清理本机音频", "上传成功后 180 天清理本机音频"};
+        int[] days = {0, 30, 90, 180};
+        new AlertDialog.Builder(this).setTitle("本机音频保留期")
+            .setMessage("只控制手机上的音频副本；不更改服务器密文保留期。")
+            .setItems(choices, (dialog, which) -> {
+                int selected = days[which];
+                dialog.dismiss();
+                if (selected == 0) saveRetention(selected);
+                else new AlertDialog.Builder(this).setTitle("启用自动清理？")
+                    .setMessage("录音超过 " + selected + " 天、且所有加密片段已由服务器确认保存并带有完整结束标记后，应用会删除手机上的音频副本。手机当前不能一键从服务器恢复音频；文字成果保留。服务器按 RECORDER_RETENTION_DAYS 独立清理，确认该保留期足够。")
+                    .setNegativeButton("取消", null).setPositiveButton("启用", (confirm, button) -> saveRetention(selected)).show();
+            }).setNegativeButton("取消", null).show();
+    }
+    private void saveRetention(int days) {
+        if (!editable() || AnalysisService.busy) return;
+        if (!vault.preferences().edit().putInt("local-audio-retention-days", days).commit()) { toast("保留期设置失败"); return; }
+        RetentionWorker.schedule(this, days); buildScreen(); toast(days == 0 ? "已改为手动清理" : "自动保留期已更新");
+    }
     private void refreshInfo() {
         if (modelsReady != ModelManager.ready(this)) { buildScreen(); return; }
         cloud.setEnabled(!RecordingService.active); wifi.setEnabled(!RecordingService.active);

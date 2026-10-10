@@ -1,6 +1,8 @@
 package cn.personal.recorder;
 
 import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import javax.crypto.AEADBadTagException;
@@ -8,6 +10,8 @@ import javax.crypto.spec.SecretKeySpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import static org.junit.Assert.*;
 
 public class TextFeaturesTest {
@@ -35,6 +39,29 @@ public class TextFeaturesTest {
         doc.getJSONArray("segments").put(new JSONObject().put("start", 61).put("end", 63).put("speaker", 0).put("text", "下周提交").put("overlap", true));
         String text = Transcript.text(doc); assertTrue(text.contains("00:01:01")); assertTrue(text.contains("小王")); assertTrue(text.contains("重叠语音")); assertTrue(text.contains("下周提交"));
     }
+    @Test public void markdownExportKeepsTimestampsSpeakersAndGeneratedResults() throws Exception {
+        JSONObject doc = Transcript.create("record-id", true); doc.getJSONObject("names").put("0", "小王");
+        doc.getJSONArray("segments").put(new JSONObject().put("start", 3).put("end", 4).put("speaker", 0).put("text", "决定周五交付"));
+        doc.put("summary", "主题\n待办：负责人小王，截止周五").put("outline", "交付计划").put("mindMap", "{\"name\":\"会议\",\"children\":[]}");
+        String markdown = TextExporter.markdown(doc);
+        assertTrue(markdown.contains("00:00:03")); assertTrue(markdown.contains("小王")); assertTrue(markdown.contains("待办"));
+        assertTrue(markdown.contains("## 大纲")); assertTrue(markdown.contains("- 会议"));
+    }
+    @Test public void wordExportIsAValidPackageAndEscapesXml() throws Exception {
+        JSONObject doc = Transcript.create("id", true); doc.getJSONArray("segments")
+            .put(new JSONObject().put("start", 0).put("end", 1).put("speaker", 0).put("text", "A < B & 中文"));
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); TextExporter.writeDocx(doc, bytes);
+        boolean contentTypes = false, rootRels = false, document = false; String xml = "";
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes.toByteArray()), StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if ("[Content_Types].xml".equals(entry.getName())) contentTypes = true;
+                if ("_rels/.rels".equals(entry.getName())) rootRels = true;
+                if ("word/document.xml".equals(entry.getName())) { document = true; xml = new String(zip.readAllBytes(), StandardCharsets.UTF_8); }
+            }
+        }
+        assertTrue(contentTypes); assertTrue(rootRels); assertTrue(document); assertTrue(xml.contains("A &lt; B &amp; 中文"));
+    }
     @Test public void splittingPreservesAllTextAndUnicode() {
         String text = ("中文🙂文字\n").repeat(7000); List<String> parts = Transcript.parts(text, 20000);
         assertEquals(text, String.join("", parts)); for (String p : parts) assertFalse(Character.isHighSurrogate(p.charAt(p.length() - 1)));
@@ -53,6 +80,32 @@ public class TextFeaturesTest {
     @Test public void cancelledSummaryNeverStartsNetwork() throws Exception {
         try { DeepSeekClient.summarize("文字", "synthetic-key", () -> true, s -> {}, (r, k, c) -> { fail(); return ""; }); fail(); }
         catch (InterruptedException expected) {}
+    }
+    @Test public void outlineAndMindMapUseTextOnlyPromptsAndValidateTree() throws Exception {
+        String outline = DeepSeekClient.generate("会议转写", "synthetic-key", () -> false, s -> {}, (body, credential, cancelled) -> {
+            assertEquals("synthetic-key", credential); assertEquals("会议转写", body.getJSONArray("messages").getJSONObject(1).getString("content"));
+            assertTrue(body.getJSONArray("messages").getJSONObject(0).getString("content").contains("层级大纲"));
+            return "## 讨论\n- 决定";
+        }, "meeting", "outline");
+        assertTrue(outline.contains("决定"));
+        String map = DeepSeekClient.generate("课堂转写", "synthetic-key", () -> false, s -> {}, (body, credential, cancelled) -> {
+            String instruction = body.getJSONArray("messages").getJSONObject(0).getString("content");
+            assertTrue(instruction.contains("严格有效的 JSON")); assertFalse(body.toString().contains("input_audio"));
+            return "{\"name\":\"课程\",\"children\":[{\"name\":\"概念\",\"children\":[]}]}";
+        }, "classroom", "mindmap");
+        assertEquals("课程", new JSONObject(map).getString("name"));
+        try {
+            DeepSeekClient.generate("课堂转写", "synthetic-key", () -> false, s -> {}, (body, credential, cancelled) -> "not json", "classroom", "mindmap");
+            fail("invalid mind map output should not be stored");
+        } catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("格式无效")); }
+    }
+    @Test public void summaryPromptNamesRequiredDecisionDisputeAndTodoFields() throws Exception {
+        DeepSeekClient.generate("会议文字", "synthetic-key", () -> false, s -> {}, (body, credential, cancelled) -> {
+            String prompt = body.getJSONArray("messages").getJSONObject(0).getString("content");
+            assertTrue(prompt.contains("主题")); assertTrue(prompt.contains("结论与决定")); assertTrue(prompt.contains("争议点"));
+            assertTrue(prompt.contains("负责人")); assertTrue(prompt.contains("截止时间")); assertTrue(prompt.contains("来源时间"));
+            return "纪要";
+        }, "meeting", "summary");
     }
     @Test public void speakerIdsRemainStableAcrossBatches() {
         try (SpeakerRegistry speakers = new SpeakerRegistry()) {
