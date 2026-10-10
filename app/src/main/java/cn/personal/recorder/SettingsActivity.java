@@ -47,7 +47,6 @@ public final class SettingsActivity extends Activity {
         LinearLayout root = ui.screen();
         LinearLayout header = ui.row(); header.addView(ui.button("返回", this::finish, false));
         TextView title = ui.title("设置", 28); title.setPadding(ui.dp(18), 0, 0, 0); header.addView(title); root.addView(header);
-        root.addView(ui.label("录音、同步与安全，按你的习惯设置", 13, ui.muted));
 
         LinearLayout recording = ui.card(root); recording.addView(ui.title("录音", 17));
         toggle(recording, "打开应用自动录音", "双按电源键进入后自动开始", vault.preferences().getBoolean("ready", true),
@@ -114,9 +113,9 @@ public final class SettingsActivity extends Activity {
         system.addView(ui.label("外观 · 跟随系统浅色 / 深色模式", 14, ui.ink));
         ui.action(system, "权限与后台运行", "麦克风、通知与电池设置", () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
         ui.action(system, "锁屏启动排查", "检查双按启动与录音权限", () -> new AlertDialog.Builder(this).setTitle("锁屏启动排查")
-            .setMessage("先在解锁状态授予麦克风权限，再打开自动录音。将 MagicOS 电源键双按映射到“加密录音”，并检查应用启动/电池设置。\n\n如果锁屏双按只显示系统解锁页，没有出现录音首页，系统可能尚未把启动请求交给应用。若已出现首页但录音失败，可导出诊断信息协助排查。\n\n手机重启后第一次解锁前，加密配置尚不可用。")
+            .setMessage("先在解锁状态授予麦克风权限，再打开自动录音。将 MagicOS 电源键双按映射到“Record”，并检查应用启动/电池设置。\n\n如果锁屏双按只显示系统解锁页，没有出现录音首页，系统可能尚未把启动请求交给应用。若已出现首页但录音失败，可导出诊断信息协助排查。\n\n手机重启后第一次解锁前，加密配置尚不可用。")
             .setNegativeButton("关闭", null).setPositiveButton("导出诊断", (d, w) -> exportDiagnostics()).show());
-        system.addView(ui.label("加密录音 " + BuildConfig.VERSION_NAME + " · 音频仅以密文保存在服务器", 12, ui.muted));
+        system.addView(ui.label("Record " + BuildConfig.VERSION_NAME, 12, ui.muted));
         refreshInfo();
     }
     private interface ToggleAction { void change(boolean enabled); }

@@ -131,7 +131,7 @@ final class TextExporter {
             while (index < lines.size() || pageNumber == 0) {
                 PdfDocument.Page page = pdf.startPage(new PdfDocument.PageInfo.Builder(pageWidth, pageHeight, ++pageNumber).create());
                 Canvas canvas = page.getCanvas(); float y = top;
-                canvas.drawText("加密录音 · 文字与成果", left, y, heading); y += lineHeight * 1.8f;
+                canvas.drawText("Record · 文字与成果", left, y, heading); y += lineHeight * 1.8f;
                 int limit = (int) ((pageHeight - bottom - y) / lineHeight);
                 for (int i = 0; i < limit && index < lines.size(); i++, index++) {
                     canvas.drawText(lines.get(index), left, y, lines.get(index).startsWith("录音记录") ? heading : paint); y += lineHeight;

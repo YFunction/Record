@@ -68,6 +68,7 @@ public class UiTest {
             MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             assertNotNull(find(activity, "设置")); assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音")); assertNotNull(find(activity, "搜索"));
             assertNotNull(find(activity, "内容分类")); assertNotNull(find(activity, "隐私录音")); assertNotNull(find(activity, "会议记录")); assertNotNull(find(activity, "课堂记录"));
+            assertNull(find(activity, "管理"));
             assertNull(find(activity, "导入连接配置")); assertNull(find(activity, "备份恢复密钥"));
             assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             assertTrue(shadowOf(activity).getShowWhenLocked()); assertTrue(shadowOf(activity).getTurnScreenOn());

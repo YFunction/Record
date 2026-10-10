@@ -18,6 +18,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -34,8 +35,8 @@ public final class MainActivity extends Activity {
     private Ui ui;
     private int INK, MUTED, TEAL, RED;
     private Vault vault;
-    private TextView timer, state, mode, sync, playing, liveStatus, liveTranscript;
-    private Button record;
+    private TextView timer, state, mode, sync, playing, liveStatus, liveTranscript, markStatus;
+    private Button record, markButton;
     private boolean resumed;
     private AlertDialog visibleDialog;
     private LinearLayout library, categoryRail, liveCard;
@@ -62,14 +63,9 @@ public final class MainActivity extends Activity {
         launchHandled = (saved != null && saved.getBoolean("handled")) || getIntent().getBooleanExtra("settings", false);
         if (saved != null) exportSession = saved.getString("export-session");
         LinearLayout root = ui.screen();
-        LinearLayout header = row(); header.addView(ui.title("声记", 30), new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout header = row(); header.addView(ui.title("Record", 30), new LinearLayout.LayoutParams(0, -2, 1));
         header.addView(button("设置", () -> unlocked(this::settings), false)); root.addView(header);
-        root.addView(label("把声音安全地整理成自己的资料", 13, MUTED));
-        LinearLayout categoriesHeader = row();
-        categoriesHeader.addView(ui.title("内容分类", 19), new LinearLayout.LayoutParams(0, -2, 1));
-        categoriesHeader.addView(button("管理", () -> unlocked(() -> startActivity(new Intent(this, CategoryActivity.class))), false));
-        root.addView(categoriesHeader);
-        root.addView(label("按场景浏览录音，点击分类即可筛选", 12, MUTED));
+        root.addView(ui.title("内容分类", 19));
         HorizontalScrollView categoryScroll = new HorizontalScrollView(this); categoryScroll.setHorizontalScrollBarEnabled(false);
         categoryRail = row(); categoryRail.setPadding(0, dp(2), 0, dp(2)); categoryScroll.addView(categoryRail);
         root.addView(categoryScroll);
@@ -82,6 +78,9 @@ public final class MainActivity extends Activity {
         state = label("准备就绪", 14, MUTED); state.setGravity(Gravity.CENTER); hero.addView(state);
         record = button("开始录音", () -> { if (RecordingService.active) stopRecording(); else startRecording(); }, true);
         record.setTextSize(18); record.setMinHeight(dp(72)); hero.addView(record, spaced());
+        markButton = button("标记这一刻", this::markMoment, false);
+        markButton.setVisibility(View.GONE); hero.addView(markButton);
+        markStatus = label("", 12, MUTED); markStatus.setGravity(Gravity.CENTER); markStatus.setVisibility(View.GONE); hero.addView(markStatus);
         sync = label("", 12, MUTED); sync.setGravity(Gravity.CENTER); hero.addView(sync);
         liveCard = card(root); liveCard.setVisibility(View.GONE);
         liveCard.addView(ui.title("实时文字", 18));
@@ -133,6 +132,10 @@ public final class MainActivity extends Activity {
         state.setText(active ? RecordingService.state : ("尚未录音".equals(RecordingService.state) ? "准备就绪 · 随时开始" : RecordingService.state));
         record.setText(RecordingService.finalizing ? "正在保存文字…" : active ? "停止并保存" : "开始录音");
         record.setEnabled(!RecordingService.finalizing);
+        markButton.setVisibility(active && !RecordingService.finalizing ? View.VISIBLE : View.GONE);
+        markButton.setEnabled(active && RecordingService.startedElapsed > 0);
+        markStatus.setVisibility(active && !RecordingService.markStatus.isEmpty() ? View.VISIBLE : View.GONE);
+        markStatus.setText(RecordingService.markStatus);
         record.setBackgroundTintList(ColorStateList.valueOf(active ? RED : TEAL)); record.setTextColor(active ? ui.background : ui.onAccent);
         mode.setText(vault.cloudEnabled() ? "本地加密 · 云端同步" : "本地加密录音");
 
@@ -182,6 +185,10 @@ public final class MainActivity extends Activity {
         }
     }
     private void stopRecording() { launchHandled = true; if (RecordingService.active) startService(new Intent(this, RecordingService.class).setAction(RecordingService.STOP)); }
+    private void markMoment() {
+        if (!RecordingService.active || RecordingService.startedElapsed <= 0) { toast("录音尚未开始"); return; }
+        startService(new Intent(this, RecordingService.class).setAction(RecordingService.MARK));
+    }
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
         if (request == 10 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRecording();
@@ -283,6 +290,7 @@ public final class MainActivity extends Activity {
         String date = new SimpleDateFormat("yyyy年MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time));
         final AlertDialog[] sheet = new AlertDialog[1];
         sheet[0] = ui.bottomSheet("录音详情", entry.categoryName + "  ·  " + date, (widgets, actions) -> {
+            widgets.action(actions, "瞬间标记", "查看标记并从对应时间回听", () -> { sheet[0].dismiss(); showMoments(entry); });
             widgets.action(actions, "查看文字与成果", "转写、AI 总结、大纲和思维导图", () -> { sheet[0].dismiss(); releasePlayer(); startActivity(new Intent(this, TextActivity.class).putExtra("session", entry.id)); });
             widgets.action(actions, "更改所属分类", "将这场录音移入其他内容分类", () -> { sheet[0].dismiss(); changeCategory(entry); });
             widgets.action(actions, "播放录音", entry.chunks.length == 0 ? "手机音频已清理，仅保留文字成果" : "在手机内存中解密播放", () -> { sheet[0].dismiss(); if (entry.chunks.length == 0) toast("本地音频已清理，文字仍可查看"); else play(entry); });
@@ -296,19 +304,62 @@ public final class MainActivity extends Activity {
                             .putExtra(Intent.EXTRA_TITLE, "录音-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new java.util.Date(entry.time)) + ".aac"), 21);
                     }));
             });
-            widgets.action(actions, "删除本地资料", "删除音频、转写、总结和生成成果", () -> {
-                sheet[0].dismiss(); showPrivate(new AlertDialog.Builder(this).setTitle("删除本地录音与文字？").setMessage("这会删除本场音频、转写和总结的手机副本。未上传内容将无法恢复，云端副本不会删除。")
+            widgets.action(actions, "删除本地资料", "删除音频、瞬间标记、文字和成果", () -> {
+                sheet[0].dismiss(); showPrivate(new AlertDialog.Builder(this).setTitle("删除本地资料？").setMessage("这会删除本场音频、瞬间标记、转写和成果的手机副本。未上传内容将无法恢复，云端副本不会删除。")
                     .setNegativeButton("取消", null).setPositiveButton("删除", (dialog, which) -> {
                         if (!editable()) return; releasePlayer();
                         if (AnalysisService.busy || LiveTranscriber.isBusyFor(entry.id)) { toast("请等待文字处理结束后再删除"); return; }
                         io.execute(() -> {
-                            boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok; boolean result = ok;
+                            boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok;
+                            ok = MomentStore.delete(this, entry.id) && ok; boolean result = ok;
                             handler.post(() -> { librarySignature = ""; loadLibrary(); toast(result ? "本地录音与文字已删除" : "部分文件删除失败，请重试"); });
                         });
                     }));
             });
         });
         showPrivate(sheet[0]);
+    }
+    private void showMoments(RecordingLibrary.Entry entry) {
+        io.execute(() -> {
+            try {
+                List<MomentStore.Mark> marks = MomentStore.list(this, entry.id);
+                handler.post(() -> {
+                    if (isDestroyed() || getSystemService(KeyguardManager.class).isKeyguardLocked()) return;
+                    final AlertDialog[] sheet = new AlertDialog[1];
+                    sheet[0] = ui.bottomSheet("瞬间标记", marks.isEmpty() ? "暂无标记" : marks.size() + " 处标记", (widgets, actions) -> {
+                        for (int i = 0; i < marks.size(); i++) {
+                            int index = i; MomentStore.Mark mark = marks.get(i);
+                            widgets.action(actions, Transcript.time(mark.offsetMs / 1000.0),
+                                mark.note.isEmpty() ? "回听或添加备注" : mark.note, () -> {
+                                    sheet[0].dismiss(); momentActions(entry, index, mark);
+                                });
+                        }
+                    });
+                    showPrivate(sheet[0]);
+                });
+            } catch (Exception e) { handler.post(() -> toast("无法读取瞬间标记")); }
+        });
+    }
+    private void momentActions(RecordingLibrary.Entry entry, int index, MomentStore.Mark mark) {
+        String[] actions = {"从这里回听", "编辑备注"};
+        showPrivate(new AlertDialog.Builder(this).setTitle(Transcript.time(mark.offsetMs / 1000.0))
+            .setItems(actions, (dialog, selected) -> {
+                if (selected == 0) {
+                    if (entry.chunks.length == 0) toast("本地音频已清理");
+                    else play(entry, mark.offsetMs / 1000.0);
+                } else editMoment(entry, index, mark.note);
+            }).setNegativeButton("关闭", null));
+    }
+    private void editMoment(RecordingLibrary.Entry entry, int index, String existing) {
+        EditText input = new EditText(this); input.setSingleLine(false); input.setMaxLines(3);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(120)});
+        input.setText(existing); input.setHint("备注，可留空");
+        showPrivate(new AlertDialog.Builder(this).setTitle("编辑标记备注").setView(input)
+            .setNegativeButton("取消", null).setPositiveButton("保存", (dialog, which) -> io.execute(() -> {
+                try { MomentStore.rename(this, entry.id, index, input.getText().toString());
+                    handler.post(() -> { toast("已保存"); showMoments(entry); }); }
+                catch (Exception e) { handler.post(() -> toast("备注保存失败")); }
+            })));
     }
     private void changeCategory(RecordingLibrary.Entry entry) {
         try {
@@ -329,7 +380,8 @@ public final class MainActivity extends Activity {
             showPrivate(sheet[0]);
         } catch (Exception e) { toast("无法读取分类"); }
     }
-    private void play(RecordingLibrary.Entry entry) {
+    private void play(RecordingLibrary.Entry entry) { play(entry, 0); }
+    private void play(RecordingLibrary.Entry entry, double fromSeconds) {
         releasePlayer(); playbackActive = true; int generation = playbackGeneration; playing.setText("正在验证并解密录音… 点击取消"); playing.setVisibility(View.VISIBLE);
         io.execute(() -> {
             try {
@@ -338,7 +390,8 @@ public final class MainActivity extends Activity {
                     if (isDestroyed() || generation != playbackGeneration || RecordingService.active || getSystemService(KeyguardManager.class).isKeyguardLocked()) { source.close(); return; }
                     try {
                         playingSource = source; player = new MediaPlayer(); player.setDataSource(source);
-                        player.setOnPreparedListener(p -> { p.start(); playing.setText(getString(R.string.playback_detail,
+                        player.setOnPreparedListener(p -> { if (fromSeconds > 0) p.seekTo((int) Math.min(Integer.MAX_VALUE, Math.min(fromSeconds, source.samples / 16000.0) * 1000));
+                            p.start(); playing.setText(getString(R.string.playback_detail,
                             source.complete ? "播放中" : "播放已保存的部分", duration(source.samples / 16000))); });
                         player.setOnCompletionListener(p -> releasePlayer()); player.setOnErrorListener((p, a, b) -> { releasePlayer(); toast("播放失败，可尝试导出 AAC 后播放"); return true; }); player.prepareAsync();
                     } catch (Exception e) { releasePlayer(); toast("无法播放这场录音"); }

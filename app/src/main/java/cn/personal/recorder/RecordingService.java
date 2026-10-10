@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class RecordingService extends Service {
     static final String STOP = "cn.personal.recorder.STOP";
+    static final String MARK = "cn.personal.recorder.MARK";
     static final String EXTRA_CATEGORY = "recording-category";
     static volatile boolean active;
     static volatile String state = "尚未录音";
@@ -24,6 +25,8 @@ public final class RecordingService extends Service {
     static volatile long stoppedElapsed;
     static volatile boolean finalizing;
     static volatile String session = "";
+    static volatile int markCount;
+    static volatile String markStatus = "";
     private AacRecorder recorder;
     private LiveTranscriber liveText;
     private PowerManager.WakeLock wakeLock;
@@ -31,11 +34,26 @@ public final class RecordingService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean stopping;
     private boolean captureStopped, liveDone, finished;
+    private final java.util.concurrent.ExecutorService markWriter = Executors.newSingleThreadExecutor();
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && STOP.equals(intent.getAction())) {
             stopping = true;
             if (recorder != null) recorder.stop(); else finishRecording();
+            return START_NOT_STICKY;
+        }
+        if (intent != null && MARK.equals(intent.getAction())) {
+            if (active && !stopping && startedElapsed > 0 && !session.isEmpty()) {
+                String markedSession = session;
+                long offsetMs = android.os.SystemClock.elapsedRealtime() - startedElapsed;
+                markWriter.execute(() -> {
+                    try { int saved = MomentStore.add(this, markedSession, offsetMs);
+                        if (markedSession.equals(session)) { markCount = saved; markStatus = "已标记 " + saved + " 处"; } }
+                    catch (Exception e) { if (markedSession.equals(session)) markStatus = "标记保存失败"; }
+                    main.post(() -> { if (active && markedSession.equals(session))
+                        getSystemService(NotificationManager.class).notify(1, notification(markStatus)); });
+                });
+            } else if (!active) stopSelf(startId);
             return START_NOT_STICKY;
         }
         if (active || stopping || finalizing) return START_NOT_STICKY;
@@ -45,7 +63,7 @@ public final class RecordingService extends Service {
             nm.createNotificationChannel(new NotificationChannel("recording", "录音状态", NotificationManager.IMPORTANCE_LOW));
             startForeground(1, notification("正在准备录音"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             recorder = new AacRecorder(this, intent == null ? null : intent.getStringExtra(EXTRA_CATEGORY));
-            session = recorder.sessionId();
+            session = recorder.sessionId(); markCount = 0; markStatus = "";
             if (new Vault(this).preferences().getBoolean("live-transcription-enabled", true) && !AnalysisService.busy)
                 liveText = LiveTranscriber.start(this, session, () -> main.post(this::onLiveFinished));
             liveDone = liveText == null;
@@ -92,8 +110,10 @@ public final class RecordingService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class)
             .putExtra("settings", true), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         PendingIntent stop = PendingIntent.getService(this, 2, new Intent(this, RecordingService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent mark = PendingIntent.getService(this, 3, new Intent(this, RecordingService.class).setAction(MARK), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, "recording").setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle(finalizing ? "正在保存实时文字" : "加密录音正在运行").setContentText(detail).setOngoing(true).setContentIntent(open)
+            .setContentTitle(finalizing ? "正在保存实时文字" : "Record 正在录音").setContentText(detail).setOngoing(true).setContentIntent(open)
+            .addAction(new Notification.Action.Builder(null, "标记", mark).build())
             .addAction(new Notification.Action.Builder(null, "停止录音", stop).build()).build();
     }
     private void onCaptureStopped() {
@@ -121,6 +141,7 @@ public final class RecordingService extends Service {
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
     }
     @Override public void onDestroy() {
+        markWriter.shutdown();
         if (recorder != null) recorder.stop();
         active = false; finalizing = false;
         if (uploader != null) uploader.shutdownNow();
