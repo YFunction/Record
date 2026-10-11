@@ -45,7 +45,7 @@ public final class SearchActivity extends Activity {
             }
         } catch (Exception ignored) { /* The search page still supports all categories. */ }
         LinearLayout root = ui.screen(); LinearLayout heading = ui.row();
-        heading.addView(ui.button("返回", this::finish, false));
+        heading.addView(ui.quietButton("返回", this::finish));
         TextView title = ui.title("本地搜索", 24); title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title); root.addView(heading);
         root.addView(ui.label("只搜索手机上的加密文字资料；输入的关键词不会发往云端。", 13, ui.muted));
         LinearLayout controls = ui.card(root);

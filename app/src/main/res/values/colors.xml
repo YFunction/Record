@@ -1,6 +1,7 @@
 <resources>
     <color name="background">#F4F6F5</color>
     <color name="surface">#FFFFFF</color>
+    <color name="hero">#E8F2ED</color>
     <color name="ink">#1B292A</color>
     <color name="muted">#697879</color>
     <color name="accent">#136B5E</color>

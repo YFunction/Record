@@ -5,8 +5,10 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 final class RecordingLibrary {
     static final class Entry {
@@ -30,6 +32,9 @@ final class RecordingLibrary {
     static List<Entry> list(Context context) {
         CategoryStore.State catalog;
         try { catalog = CategoryStore.load(context); } catch (Exception e) { throw new IllegalStateException("无法读取加密分类目录", e); }
+        return list(context, catalog);
+    }
+    static List<Entry> list(Context context, CategoryStore.State catalog) {
         Map<String, List<File>> sessions = new LinkedHashMap<>();
         for (File f : ChunkStore.files(context)) {
             if (!f.getName().matches("[0-9a-f-]{36}_[0-9]{8}\\.enc")) continue;
@@ -37,10 +42,12 @@ final class RecordingLibrary {
         }
         List<Entry> entries = new ArrayList<>();
         for (Map.Entry<String, List<File>> e : sessions.entrySet()) { String category = catalog.assigned(e.getKey()); entries.add(new Entry(e.getKey(), category, catalog.name(category), e.getValue())); }
-        for (File file : TextStore.files(context)) {
-            String id = file.getName().substring(0, 36);
+        Set<String> textSessions = new LinkedHashSet<>();
+        for (File file : TextStore.files(context)) textSessions.add(file.getName().substring(0, 36));
+        for (String id : textSessions) {
+            if (sessions.containsKey(id)) continue;
             File latest = TextStore.latest(context, id);
-            if (!sessions.containsKey(id) && latest != null) { sessions.put(id, new ArrayList<>()); String category = catalog.assigned(id); entries.add(new Entry(id, category, catalog.name(category), new ArrayList<>(), latest.lastModified())); }
+            if (latest != null) { String category = catalog.assigned(id); entries.add(new Entry(id, category, catalog.name(category), new ArrayList<>(), latest.lastModified())); }
         }
         entries.sort(Comparator.comparingLong((Entry e) -> e.time).reversed());
         return entries;

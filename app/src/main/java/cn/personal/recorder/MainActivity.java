@@ -46,6 +46,7 @@ public final class MainActivity extends Activity {
     private static volatile boolean exportBusy;
     static volatile boolean playbackActive;
     private int ticks, playbackGeneration;
+    private Boolean recordingUiActive;
     private String librarySignature = "", exportSession, libraryFilter = "";
     private MediaPlayer player;
     private RecordingSource playingSource;
@@ -64,20 +65,20 @@ public final class MainActivity extends Activity {
         if (saved != null) exportSession = saved.getString("export-session");
         LinearLayout root = ui.screen();
         LinearLayout header = row(); header.addView(ui.title("Record", 30), new LinearLayout.LayoutParams(0, -2, 1));
-        header.addView(button("设置", () -> unlocked(this::settings), false)); root.addView(header);
+        header.addView(ui.quietButton("设置", () -> unlocked(this::settings))); root.addView(header);
         root.addView(ui.title("内容分类", 19));
         HorizontalScrollView categoryScroll = new HorizontalScrollView(this); categoryScroll.setHorizontalScrollBarEnabled(false);
         categoryRail = row(); categoryRail.setPadding(0, dp(2), 0, dp(2)); categoryScroll.addView(categoryRail);
         root.addView(categoryScroll);
         renderCategories(null, java.util.Collections.emptyList());
         LinearLayout quickHeading = row(); quickHeading.addView(ui.title("快速录音", 19)); root.addView(quickHeading);
-        LinearLayout hero = card(root);
+        LinearLayout hero = ui.heroCard(root);
         mode = label("本地加密保存", 13, TEAL); mode.setGravity(Gravity.CENTER); hero.addView(mode);
-        timer = label("00:00:00", 52, INK); timer.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL); timer.setGravity(Gravity.CENTER);
-        timer.setAutoSizeTextTypeUniformWithConfiguration(24, 52, 1, android.util.TypedValue.COMPLEX_UNIT_SP); hero.addView(timer);
+        timer = label("00:00:00", 46, INK); timer.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL); timer.setGravity(Gravity.CENTER);
+        timer.setAutoSizeTextTypeUniformWithConfiguration(24, 46, 1, android.util.TypedValue.COMPLEX_UNIT_SP); hero.addView(timer);
         state = label("准备就绪", 14, MUTED); state.setGravity(Gravity.CENTER); hero.addView(state);
         record = button("开始录音", () -> { if (RecordingService.active) stopRecording(); else startRecording(); }, true);
-        record.setTextSize(18); record.setMinHeight(dp(72)); hero.addView(record, spaced());
+        record.setTextSize(18); record.setMinHeight(dp(64)); hero.addView(record, spaced());
         markButton = button("标记这一刻", this::markMoment, false);
         markButton.setVisibility(View.GONE); hero.addView(markButton);
         markStatus = label("", 12, MUTED); markStatus.setGravity(Gravity.CENTER); markStatus.setVisibility(View.GONE); hero.addView(markStatus);
@@ -90,8 +91,7 @@ public final class MainActivity extends Activity {
         liveCard.addView(liveScroll, new LinearLayout.LayoutParams(-1, dp(180)));
         liveCard.addView(label("手机本地识别的预览文字可能有误；停止后可进行完整转写与发言人区分。", 12, MUTED));
         LinearLayout heading = row(); libraryTitle = ui.title("最近录音", 19); heading.addView(libraryTitle, new LinearLayout.LayoutParams(0, -2, 1));
-        heading.addView(button("搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))), false));
-        heading.addView(button("刷新", () -> { librarySignature = ""; loadLibrary(); }, false)); root.addView(heading);
+        heading.addView(ui.quietButton("搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))))); root.addView(heading);
         filterCaption = label("全部分类", 12, MUTED); root.addView(filterCaption);
         playing = label("", 13, TEAL); playing.setVisibility(View.GONE); playing.setOnClickListener(v -> releasePlayer()); root.addView(playing);
         library = column(0); root.addView(library); renderLibrary(java.util.Collections.emptyList());
@@ -99,7 +99,7 @@ public final class MainActivity extends Activity {
         UploadWorker.periodic(this);
     }
     @Override protected void onResume() {
-        super.onResume(); resumed = true; setShowWhenLocked(true);
+        super.onResume(); resumed = true; ticks = 0; setShowWhenLocked(true);
         handler.removeCallbacks(refresh); handler.post(refresh); handler.post(this::maybeAutoStart);
     }
     private void maybeAutoStart() {
@@ -129,24 +129,27 @@ public final class MainActivity extends Activity {
         long seconds = active && RecordingService.startedElapsed > 0
             ? ((RecordingService.finalizing ? RecordingService.stoppedElapsed : SystemClock.elapsedRealtime()) - RecordingService.startedElapsed) / 1000 : 0;
         timer.setText(duration(seconds));
-        state.setText(active ? RecordingService.state : ("尚未录音".equals(RecordingService.state) ? "准备就绪 · 随时开始" : RecordingService.state));
-        record.setText(RecordingService.finalizing ? "正在保存文字…" : active ? "停止并保存" : "开始录音");
-        record.setEnabled(!RecordingService.finalizing);
+        setTextIfChanged(state, active ? RecordingService.state : ("尚未录音".equals(RecordingService.state) ? "准备就绪 · 随时开始" : RecordingService.state));
+        setTextIfChanged(record, RecordingService.finalizing ? "正在保存文字…" : active ? "停止并保存" : "开始录音");
+        if (record.isEnabled() == RecordingService.finalizing) record.setEnabled(!RecordingService.finalizing);
         markButton.setVisibility(active && !RecordingService.finalizing ? View.VISIBLE : View.GONE);
         markButton.setEnabled(active && RecordingService.startedElapsed > 0);
         markStatus.setVisibility(active && !RecordingService.markStatus.isEmpty() ? View.VISIBLE : View.GONE);
-        markStatus.setText(RecordingService.markStatus);
-        record.setBackgroundTintList(ColorStateList.valueOf(active ? RED : TEAL)); record.setTextColor(active ? ui.background : ui.onAccent);
-        mode.setText(vault.cloudEnabled() ? "本地加密 · 云端同步" : "本地加密录音");
+        setTextIfChanged(markStatus, RecordingService.markStatus);
+        if (recordingUiActive == null || recordingUiActive != active) {
+            record.setBackgroundTintList(ColorStateList.valueOf(active ? RED : TEAL));
+            record.setTextColor(active ? ui.background : ui.onAccent); recordingUiActive = active;
+        }
+        setTextIfChanged(mode, vault.cloudEnabled() ? "本地加密 · 云端同步" : "本地加密录音");
 
-        sync.setText(!vault.cloudEnabled() ? "每 30 秒加密保存 · 无需网络" : (!vault.configured() ? "完成服务器设置与密钥备份后开始同步" : Uploader.status));
+        setTextIfChanged(sync, !vault.cloudEnabled() ? "每 30 秒加密保存 · 无需网络" : (!vault.configured() ? "完成服务器设置与密钥备份后开始同步" : Uploader.status));
         boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked();
         LiveTranscriber.Snapshot live = LiveTranscriber.snapshot;
         boolean liveEnabled = vault.preferences().getBoolean("live-transcription-enabled", true);
         boolean sameSession = !RecordingService.session.isEmpty() && RecordingService.session.equals(live.session);
         if (resumed && hasWindowFocus() && !locked && liveEnabled && (active || sameSession && (live.busy || !live.preview.isEmpty()))) {
             liveCard.setVisibility(View.VISIBLE);
-            liveStatus.setText(sameSession ? live.status : AnalysisService.busy
+            setTextIfChanged(liveStatus, sameSession ? live.status : AnalysisService.busy
                 ? "离线模型正在处理其他任务，本场暂不提供实时文字" : ModelManager.ready(this)
                 ? (live.busy ? "上一场实时文字仍在保存；本场录音继续加密保存" : "本场实时识别未启动；下次录音可重试")
                 : "安装离线模型后可在录音时显示文字");
@@ -161,7 +164,11 @@ public final class MainActivity extends Activity {
             library.setVisibility(View.GONE); categoryRail.setVisibility(View.GONE); releasePlayer(); librarySignature = "";
             if (visibleDialog != null) visibleDialog.dismiss();
         } else { library.setVisibility(View.VISIBLE); categoryRail.setVisibility(View.VISIBLE); }
-        if (ticks++ % 3 == 0) loadLibrary();
+        if (!locked && ticks++ % 8 == 0) loadLibrary();
+        if (locked) ticks = 0;
+    }
+    private static void setTextIfChanged(TextView view, String value) {
+        if (!value.contentEquals(view.getText())) view.setText(value);
     }
     private static String duration(long seconds) { return String.format(Locale.ROOT, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60); }
     private void startRecording() {
@@ -217,22 +224,28 @@ public final class MainActivity extends Activity {
     }
     private void loadLibrary() {
         if (libraryBusy || io.isShutdown()) return; libraryBusy = true;
+        final String requestedFilter = libraryFilter;
         io.execute(() -> {
             try {
-                List<RecordingLibrary.Entry> entries = RecordingLibrary.list(this);
                 CategoryStore.State catalog = CategoryStore.load(this);
-                if (!libraryFilter.isEmpty()) {
-                    boolean exists = false; for (int i = 0; i < catalog.size(); i++) if (libraryFilter.equals(catalog.id(catalog.category(i)))) exists = true;
-                    if (!exists) libraryFilter = "";
+                List<RecordingLibrary.Entry> entries = RecordingLibrary.list(this, catalog);
+                String effectiveFilter = requestedFilter;
+                if (!requestedFilter.isEmpty()) {
+                    boolean exists = false; for (int i = 0; i < catalog.size(); i++) if (requestedFilter.equals(catalog.id(catalog.category(i)))) exists = true;
+                    if (!exists) effectiveFilter = "";
                 }
-                StringBuilder signature = new StringBuilder().append(catalog.updatedAt).append(':').append(libraryFilter).append(';');
-                for (RecordingLibrary.Entry e : entries) signature.append(e.id).append(':').append(e.bytes).append(':').append(e.uploaded).append(':').append(e.categoryId).append(';');
+                StringBuilder signature = new StringBuilder().append(catalog.updatedAt).append(':').append(effectiveFilter).append(';');
+                for (RecordingLibrary.Entry e : entries) signature.append(e.id).append(':').append(e.time).append(':').append(e.bytes).append(':').append(e.uploaded).append(':').append(e.categoryId).append(';');
+                final String selectedFilter = effectiveFilter;
                 handler.post(() -> {
                     libraryBusy = false; if (isDestroyed()) return;
+                    if (!requestedFilter.equals(libraryFilter)) { loadLibrary(); return; }
                     if (getSystemService(KeyguardManager.class).isKeyguardLocked()) return;
-                    renderCategories(catalog, entries);
-                    updateLibraryHeading(catalog);
-                    if (!signature.toString().equals(librarySignature) || librarySignature.isEmpty()) { librarySignature = signature.toString(); renderLibrary(entries); }
+                    libraryFilter = selectedFilter;
+                    if (!signature.toString().equals(librarySignature)) {
+                        librarySignature = signature.toString();
+                        renderCategories(catalog, entries); updateLibraryHeading(catalog); renderLibrary(entries);
+                    }
                 });
             } catch (Exception e) { handler.post(() -> { libraryBusy = false; toast("无法读取本地录音"); }); }
         });
@@ -243,13 +256,23 @@ public final class MainActivity extends Activity {
         for (RecordingLibrary.Entry entry : entries) if (libraryFilter.isEmpty() || libraryFilter.equals(entry.categoryId)) visible.add(entry);
         if (visible.isEmpty()) { LinearLayout empty = card(library); empty.addView(ui.title(entries.isEmpty() ? "还没有录音" : "该分类还没有录音", 17)); empty.addView(label(entries.isEmpty() ? "点击开始，声音会加密保存在手机中。" : "可以在录音操作中更改分类。", 13, MUTED)); return; }
         int shown = 0;
+        SimpleDateFormat dateFormat = new SimpleDateFormat("MM月dd日  HH:mm", Locale.CHINA);
         for (RecordingLibrary.Entry entry : visible) {
             if (shown++ >= 20) break;
-            LinearLayout item = card(library); item.setPadding(dp(16), dp(10), dp(16), dp(10));
-            item.addView(label(new SimpleDateFormat("MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time)), 17, INK));
-            item.addView(label(entry.categoryName, 12, TEAL));
+            LinearLayout item = card(library); item.setPadding(dp(16), dp(12), dp(16), dp(12));
+            LinearLayout top = row();
+            TextView date = label(dateFormat.format(new java.util.Date(entry.time)), 16, INK);
+            date.setTypeface(null, Typeface.BOLD); top.addView(date, new LinearLayout.LayoutParams(0, -2, 1));
+            top.addView(label("›", 24, MUTED)); item.addView(top);
+            LinearLayout detail = row();
+            TextView category = label(entry.categoryName, 12, TEAL);
+            category.setSingleLine(true); category.setMaxWidth(dp(116)); category.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            category.setBackground(ui.shape(ui.soft, 10)); category.setPadding(dp(9), dp(3), dp(9), dp(3));
+            detail.addView(category);
             String saved = entry.chunks.length == 0 ? "文字与成果" : entry.uploaded == entry.chunks.length ? "云端已保存" : "本地已加密";
-            item.addView(label(entry.chunks.length == 0 ? "转写与 AI 成果已加密 · 点击查看  ›" : String.format(Locale.CHINA, "%s · %.1f MB · 播放 / 成果  ›", saved, entry.bytes / 1048576.0), 12, MUTED));
+            TextView info = label(entry.chunks.length == 0 ? "加密文字" : String.format(Locale.CHINA, "%s · %.1f MB", saved, entry.bytes / 1048576.0), 12, MUTED);
+            info.setSingleLine(true); info.setEllipsize(android.text.TextUtils.TruncateAt.END); info.setPadding(dp(10), 0, 0, 0);
+            detail.addView(info, new LinearLayout.LayoutParams(0, -2, 1)); item.addView(detail);
             item.setContentDescription("录音 " + new java.util.Date(entry.time) + "，点击查看文字、播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
         }
         if (visible.size() > 20) library.addView(button("查看更早录音（共 " + visible.size() + " 场）", () -> unlocked(() -> {
@@ -277,7 +300,7 @@ public final class MainActivity extends Activity {
         LinearLayout tile = ui.categoryTile(name, count + " 场", all ? libraryFilter.isEmpty() : id.equals(libraryFilter), () -> {
             if (!id.equals(libraryFilter)) { libraryFilter = id; librarySignature = ""; loadLibrary(); }
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(142), dp(82)); params.rightMargin = dp(10);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(54)); params.rightMargin = dp(8);
         categoryRail.addView(tile, params);
     }
     private void updateLibraryHeading(CategoryStore.State catalog) {

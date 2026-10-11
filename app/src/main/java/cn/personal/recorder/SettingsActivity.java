@@ -45,7 +45,7 @@ public final class SettingsActivity extends Activity {
     }
     private void buildScreen() {
         LinearLayout root = ui.screen();
-        LinearLayout header = ui.row(); header.addView(ui.button("返回", this::finish, false));
+        LinearLayout header = ui.row(); header.addView(ui.quietButton("返回", this::finish));
         TextView title = ui.title("设置", 28); title.setPadding(ui.dp(18), 0, 0, 0); header.addView(title); root.addView(header);
 
         LinearLayout recording = ui.card(root); recording.addView(ui.title("录音", 17));

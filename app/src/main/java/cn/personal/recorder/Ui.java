@@ -20,10 +20,10 @@ import android.view.View;
 /** Shared native widgets; colors and the system dialog theme follow system night mode. */
 final class Ui {
     final Activity activity;
-    final int background, surface, ink, muted, accent, onAccent, soft, divider, danger;
+    final int background, surface, hero, ink, muted, accent, onAccent, soft, divider, danger;
     Ui(Activity activity) {
         this.activity = activity;
-        background = color(R.color.background); surface = color(R.color.surface); ink = color(R.color.ink);
+        background = color(R.color.background); surface = color(R.color.surface); hero = color(R.color.hero); ink = color(R.color.ink);
         muted = color(R.color.muted); accent = color(R.color.accent); onAccent = color(R.color.on_accent);
         soft = color(R.color.soft); divider = color(R.color.divider); danger = color(R.color.danger);
     }
@@ -46,13 +46,18 @@ final class Ui {
         LinearLayout box = new LinearLayout(activity); box.setOrientation(LinearLayout.HORIZONTAL); box.setGravity(Gravity.CENTER_VERTICAL); return box;
     }
     LinearLayout.LayoutParams spaced() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(10); p.bottomMargin = dp(10); return p;
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(8); p.bottomMargin = dp(8); return p;
     }
     GradientDrawable shape(int color, int radius) {
         GradientDrawable bg = new GradientDrawable(); bg.setColor(color); bg.setCornerRadius(dp(radius)); return bg;
     }
     LinearLayout card(LinearLayout parent) {
-        LinearLayout box = column(20); box.setBackground(shape(surface, 24)); parent.addView(box, spaced()); return box;
+        LinearLayout box = column(18); box.setBackground(shape(surface, 22)); parent.addView(box, spaced()); return box;
+    }
+    LinearLayout heroCard(LinearLayout parent) {
+        LinearLayout box = column(18);
+        GradientDrawable background = shape(hero, 24); background.setStroke(dp(1), divider);
+        box.setBackground(background); parent.addView(box, spaced()); return box;
     }
     TextView label(String text, int size, int color) {
         TextView label = new TextView(activity); label.setText(text); label.setTextSize(size); label.setTextColor(color);
@@ -62,14 +67,20 @@ final class Ui {
     LinearLayout categoryTile(String name, String count, boolean selected, Runnable action) {
         int fill = selected ? accent : surface;
         int foreground = selected ? onAccent : ink;
-        LinearLayout tile = new LinearLayout(activity); tile.setOrientation(LinearLayout.VERTICAL);
-        tile.setGravity(Gravity.CENTER_VERTICAL); tile.setPadding(dp(15), dp(10), dp(15), dp(10));
-        tile.setBackground(new RippleDrawable(ColorStateList.valueOf(selected ? 0x33ffffff : 0x22999999), shape(fill, 20), null));
-        tile.setMinimumHeight(dp(82)); tile.setContentDescription(name + "，" + count + " 条录音");
-        TextView total = label(count, 12, selected ? onAccent : muted); total.setPadding(0, 0, 0, dp(3));
-        TextView category = title(name, 15); category.setTextColor(foreground); category.setPadding(0, 0, 0, 0);
-        tile.addView(total); tile.addView(category); tile.setOnClickListener(v -> action.run());
+        LinearLayout tile = row(); tile.setPadding(dp(14), dp(8), dp(14), dp(8));
+        tile.setBackground(new RippleDrawable(ColorStateList.valueOf(selected ? 0x33ffffff : 0x22999999), shape(fill, 17), null));
+        tile.setMinimumHeight(dp(54)); tile.setMinimumWidth(dp(104)); tile.setContentDescription(name + "，" + count);
+        TextView category = title(name, 14); category.setTextColor(foreground); category.setPadding(0, 0, dp(8), 0);
+        category.setSingleLine(true); category.setMaxWidth(dp(140)); category.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView total = label(count, 12, selected ? onAccent : muted); total.setPadding(0, 0, 0, 0);
+        tile.addView(category); tile.addView(total); tile.setOnClickListener(v -> action.run());
         return tile;
+    }
+    Button quietButton(String text, Runnable action) {
+        Button button = button(text, action, false);
+        button.setTextSize(14); button.setMinHeight(dp(44)); button.setMinWidth(0); button.setMinimumWidth(0);
+        button.setPadding(dp(12), dp(7), dp(12), dp(7));
+        return button;
     }
     Button button(String text, Runnable action, boolean primary) {
         Button button = new Button(activity); button.setText(text); button.setAllCaps(false); button.setTextSize(15); button.setMinHeight(dp(52));
@@ -77,16 +88,16 @@ final class Ui {
         button.setTextColor(primary ? onAccent : accent); button.setPadding(dp(16), dp(12), dp(16), dp(12)); button.setOnClickListener(v -> action.run()); return button;
     }
     void action(LinearLayout parent, String title, String subtitle, Runnable action) {
-        LinearLayout row = row(); row.setPadding(dp(14), dp(7), dp(12), dp(7)); row.setMinimumHeight(dp(66));
+        LinearLayout row = row(); row.setPadding(dp(13), dp(5), dp(12), dp(5)); row.setMinimumHeight(dp(58));
         LinearLayout text = column(0); text.addView(label(title, 16, ink));
         if (!subtitle.isEmpty()) text.addView(label(subtitle, 12, muted));
         row.addView(text, new LinearLayout.LayoutParams(0, -2, 1)); row.addView(label("›", 24, muted));
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22999999), shape(soft, 16), null));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(5); params.bottomMargin = dp(5);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(4); params.bottomMargin = dp(4);
         row.setOnClickListener(v -> action.run()); row.setContentDescription(title + "，" + subtitle); parent.addView(row, params);
     }
     AlertDialog bottomSheet(String title, String subtitle, SheetContent content) {
-        LinearLayout panel = column(20); panel.setBackground(shape(surface, 28));
+        LinearLayout panel = column(18); panel.setBackground(shape(surface, 26));
         LinearLayout handleRow = row(); handleRow.setGravity(Gravity.CENTER);
         View handle = new View(activity); handle.setBackground(shape(divider, 8));
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(38), dp(4)); hp.bottomMargin = dp(18); handleRow.addView(handle, hp); panel.addView(handleRow);
@@ -103,8 +114,8 @@ final class Ui {
         actionScroll.setFillViewport(false); actionScroll.setVerticalScrollBarEnabled(false); actionScroll.addView(actions);
         panel.addView(actionScroll);
         content.build(this, actions);
-        Button close = button("关闭", () -> { }, false);
-        panel.addView(close, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout footer = row(); footer.setGravity(Gravity.END);
+        Button close = quietButton("关闭", () -> { }); footer.addView(close); panel.addView(footer);
         AlertDialog dialog = new AlertDialog(activity) {
             @Override protected void onStart() {
                 super.onStart();

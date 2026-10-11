@@ -17,4 +17,4 @@
 
 UI 将录音详情分为转写、成果和导出分享卡片；时间戳直接承担回听入口。安全与存储设置展示本机和服务端保留策略的边界，并在启用自动删除前二次说明影响。
 
-验证：v0.8.0-beta.3 的 Gradle `assembleDebug testDebugUnitTest lintDebug`、38 项 Android 单元测试和本机原生 SenseVoice 模型冒烟测试已通过。v0.8.0-beta.4 已编译并生成签名可验证的 debug APK；本机 Gradle Worker 回环连接权限错误阻止了本次完整自动化测试。荣耀 400 Pro 真机的实时识别延迟、功耗、锁屏与长时间录音稳定性仍待实测。
+验证：v0.8.0-beta.5 已编译并生成 debug APK；Android lint 无错误，10 项 UI 测试和 1 项资料库集成测试通过直接 JUnit 运行，浅色/深色首页截图已检查。本机 Gradle Worker 回环连接错误仍阻止整套 `testDebugUnitTest` 任务；v0.8.0-beta.3 的 38 项单元测试和本机 SenseVoice 冒烟测试曾通过。荣耀 400 Pro 真机的实时识别延迟、功耗、锁屏与长时间录音稳定性仍待实测。

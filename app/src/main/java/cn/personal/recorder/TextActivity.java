@@ -59,7 +59,7 @@ public final class TextActivity extends Activity {
         focusField = getIntent().getStringExtra("focus-field"); if (focusField == null) focusField = "";
         refreshCategoryPolicy();
         ui = new Ui(this); LinearLayout root = ui.screen(); pageScroll = (ScrollView) root.getParent();
-        LinearLayout heading = ui.row(); heading.addView(ui.button("返回", this::finish, false));
+        LinearLayout heading = ui.row(); heading.addView(ui.quietButton("返回", this::finish));
         TextView title = ui.title("录音详情", 24); title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title); root.addView(heading);
         root.addView(ui.label("分类：" + categoryName + " · 发言人识别在手机本地完成", 13, ui.muted));
         LinearLayout actions = ui.card(root); actions.addView(ui.title("录音文字", 18));

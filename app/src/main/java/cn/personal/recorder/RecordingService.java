@@ -12,6 +12,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -71,18 +72,13 @@ public final class RecordingService extends Service {
             wakeLock.acquire(60 * 60 * 1000L);
             active = true; finalizing = false; startedElapsed = 0; stoppedElapsed = 0; state = "正在准备麦克风与编码器";
             if (new Vault(this).configured()) {
-            uploader = Executors.newSingleThreadScheduledExecutor();
-            uploader.scheduleWithFixedDelay(() -> {
-                try { Uploader.drain(this, () -> !active, 20_000); } catch (Exception ignored) {}
-                if (active) main.post(() -> {
-                    if (active) getSystemService(NotificationManager.class).notify(1, notification(Uploader.status));
-                });
-            }, 0, 3, TimeUnit.SECONDS);
+                uploader = Executors.newSingleThreadScheduledExecutor();
+                uploader.scheduleWithFixedDelay(this::uploadOnce, 0, 30, TimeUnit.SECONDS);
             }
             Thread capture = new Thread(() -> {
                 boolean complete = false;
                 try {
-                    recorder.run(() -> { if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L); },
+                    recorder.run(() -> { if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(60 * 60 * 1000L); requestUpload(); },
                         () -> { startedElapsed = android.os.SystemClock.elapsedRealtime();
                             LaunchDiagnostics.serviceNote(this, "microphone-started");
                             state = "正在录音，音频约每 30 秒加密保存";
@@ -105,6 +101,17 @@ public final class RecordingService extends Service {
             finishRecording();
         }
         return START_NOT_STICKY;
+    }
+    private void requestUpload() {
+        ScheduledExecutorService queue = uploader;
+        if (queue == null || queue.isShutdown()) return;
+        try { queue.execute(this::uploadOnce); } catch (RejectedExecutionException ignored) { }
+    }
+    private void uploadOnce() {
+        try { Uploader.drain(this, () -> !active, 20_000); } catch (Exception ignored) { }
+        if (active) main.post(() -> {
+            if (active) getSystemService(NotificationManager.class).notify(1, notification(Uploader.status));
+        });
     }
     private Notification notification(String detail) {
         PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class)

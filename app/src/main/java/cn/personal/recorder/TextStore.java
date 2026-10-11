@@ -5,6 +5,8 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.json.JSONObject;
 
@@ -45,8 +47,11 @@ final class TextStore {
         try { blob = TextCrypto.encrypt(text, new Vault(c).recordingKey(), name); } finally { Arrays.fill(text, (byte) 0); }
         // Remove only confirmed old revisions. The current revision and pending text are retained.
         long bytes = 0;
+        Map<String, File> latestBySession = new HashMap<>();
         for (File f : files(c)) {
-            File current = latest(c, f.getName().substring(0, 36));
+            String owner = f.getName().substring(0, 36);
+            if (!latestBySession.containsKey(owner)) latestBySession.put(owner, latest(c, owner));
+            File current = latestBySession.get(owner);
             if (!f.equals(current) && ChunkStore.uploaded(f) && f.delete()) new File(f.getPath() + ".ack").delete();
             else bytes += f.length();
         }

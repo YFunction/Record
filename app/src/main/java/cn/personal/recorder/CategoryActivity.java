@@ -21,7 +21,7 @@ public final class CategoryActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved); ui = new Ui(this); root = ui.screen();
-        LinearLayout header = ui.row(); header.addView(ui.button("返回", this::finish, false));
+        LinearLayout header = ui.row(); header.addView(ui.quietButton("返回", this::finish));
         TextView title = ui.title("录音分类", 25); title.setPadding(ui.dp(14), 0, 0, 0); header.addView(title); root.addView(header);
         root.addView(ui.label("新录音使用默认分类；历史录音可以随时调整。分类名称和分配记录只在本地及云端以密文保存。", 13, ui.muted));
         list = ui.column(0); root.addView(list);
