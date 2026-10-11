@@ -37,11 +37,18 @@ final class MomentStore {
         return result;
     }
     static synchronized int add(Context context, String session, long offsetMs) throws Exception {
+        return add(context, session, offsetMs, "");
+    }
+    static synchronized int add(Context context, String session, long offsetMs, String note) throws Exception {
         if (offsetMs < 0) throw new IOException("录音尚未开始");
         JSONObject doc = read(context, session);
         int before = doc.getJSONArray("marks").length();
         int count = append(doc, offsetMs);
-        if (count != before) write(context, session, doc);
+        if (count != before) {
+            String trimmed = note == null ? "" : note.trim();
+            doc.getJSONArray("marks").getJSONObject(count - 1).put("note", trimmed.substring(0, Math.min(trimmed.length(), 120)));
+            write(context, session, doc);
+        }
         return count;
     }
     static int append(JSONObject doc, long offsetMs) throws Exception {

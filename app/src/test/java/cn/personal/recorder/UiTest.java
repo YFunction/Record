@@ -48,6 +48,14 @@ public class UiTest {
     private TextView find(Activity activity, String text) {
         return texts(activity.findViewById(android.R.id.content)).stream().filter(v -> text.contentEquals(v.getText())).findFirst().orElse(null);
     }
+    private View findDescription(View root, String description) {
+        if (description.equals(root.getContentDescription())) return root;
+        if (root instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) root).getChildCount(); i++) {
+            View found = findDescription(((ViewGroup) root).getChildAt(i), description);
+            if (found != null) return found;
+        }
+        return null;
+    }
     private void render(Activity activity, String name) throws Exception {
         View view = activity.findViewById(android.R.id.content);
         view.measure(View.MeasureSpec.makeMeasureSpec(1179, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2556, View.MeasureSpec.EXACTLY));
@@ -66,13 +74,16 @@ public class UiTest {
     @Test public void lightHomeIsSimpleAndScreenshotsAllowed() throws Exception {
         try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
             MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
-            assertNotNull(find(activity, "设置")); assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音")); assertNotNull(find(activity, "搜索"));
+            assertNotNull(findDescription(activity.findViewById(android.R.id.content), "设置"));
+            assertNotNull(find(activity, "开始录音")); assertNotNull(find(activity, "最近录音"));
+            assertNotNull(findDescription(activity.findViewById(android.R.id.content), "搜索"));
+            assertNull(find(activity, "设置")); assertNull(find(activity, "搜索"));
             assertNotNull(find(activity, "内容分类")); assertNotNull(find(activity, "隐私录音")); assertNotNull(find(activity, "会议记录")); assertNotNull(find(activity, "课堂记录"));
             assertNull(find(activity, "管理")); assertNull(find(activity, "刷新"));
             assertNull(find(activity, "导入连接配置")); assertNull(find(activity, "备份恢复密钥"));
             assertEquals(0, activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE);
             assertTrue(shadowOf(activity).getShowWhenLocked()); assertTrue(shadowOf(activity).getTurnScreenOn());
-            find(activity, "设置").performClick(); Intent launched = shadowOf(activity).getNextStartedActivity();
+            findDescription(activity.findViewById(android.R.id.content), "设置").performClick(); Intent launched = shadowOf(activity).getNextStartedActivity();
             assertEquals(SettingsActivity.class.getName(), launched.getComponent().getClassName());
             render(activity, "light-home");
         }
@@ -80,7 +91,7 @@ public class UiTest {
     @Test public void homeSearchOpensAnUnlockedLocalSearchPage() throws Exception {
         try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
             MainActivity activity = controller.get(); controller.visible().windowFocusChanged(true);
-            find(activity, "搜索").performClick();
+            findDescription(activity.findViewById(android.R.id.content), "搜索").performClick();
             Intent launched = shadowOf(activity).getNextStartedActivity();
             assertNotNull(launched); assertEquals(SearchActivity.class.getName(), launched.getComponent().getClassName());
         }
@@ -133,10 +144,42 @@ public class UiTest {
             MainActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             TextView preview = find(activity, "00:00:00  私密测试文字");
             assertNotNull(preview); assertEquals(View.VISIBLE, preview.getVisibility());
+            assertNotNull(find(activity, "暂停")); assertNotNull(find(activity, "打标签"));
+            assertNotNull(find(activity, "翻译")); assertNotNull(find(activity, "结束并保存"));
+            View waveform = findDescription(activity.findViewById(android.R.id.content), "实时录音波形");
+            assertNotNull(waveform); assertEquals(View.VISIBLE, waveform.getVisibility());
             render(activity, "live-home");
             shadowOf(activity.getSystemService(KeyguardManager.class)).setKeyguardLocked(true);
             shadowOf(Looper.getMainLooper()).idleFor(1, TimeUnit.SECONDS);
             assertEquals(View.GONE, ((View) ((View) preview.getParent()).getParent()).getVisibility());
+        } finally {
+            RecordingService.active = false; RecordingService.session = "";
+            LiveTranscriber.snapshot = new LiveTranscriber.Snapshot("", "", "", false);
+        }
+    }
+    @Test public void recordingControlsSendPauseAndResumeActions() {
+        RecordingService.active = true; RecordingService.startedElapsed = 1;
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            MainActivity activity = controller.get(); controller.visible().windowFocusChanged(true);
+            find(activity, "暂停").performClick();
+            assertEquals(RecordingService.PAUSE, shadowOf(activity).getNextStartedService().getAction());
+            RecordingService.paused = true;
+            shadowOf(Looper.getMainLooper()).idleFor(1, TimeUnit.SECONDS);
+            find(activity, "继续").performClick();
+            assertEquals(RecordingService.RESUME, shadowOf(activity).getNextStartedService().getAction());
+        } finally {
+            RecordingService.active = false; RecordingService.paused = false; RecordingService.startedElapsed = 0;
+        }
+    }
+    @Test @Config(qualifiers = "w393dp-h852dp-night-xxhdpi") public void darkRecordingShowsWaveformAndLiveWords() throws Exception {
+        String session = "10000000-0000-4000-8000-000000000009";
+        RecordingService.active = true; RecordingService.session = session;
+        LiveTranscriber.snapshot = new LiveTranscriber.Snapshot(session, "00:00:05  Hello，会议开始", "正在本机识别", true);
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            MainActivity activity = controller.get(); controller.visible().windowFocusChanged(true);
+            assertNotNull(find(activity, "00:00:05  Hello，会议开始"));
+            assertEquals(View.VISIBLE, findDescription(activity.findViewById(android.R.id.content), "实时录音波形").getVisibility());
+            render(activity, "dark-live-home");
         } finally {
             RecordingService.active = false; RecordingService.session = "";
             LiveTranscriber.snapshot = new LiveTranscriber.Snapshot("", "", "", false);

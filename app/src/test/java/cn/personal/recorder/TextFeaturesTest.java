@@ -16,6 +16,21 @@ import static org.junit.Assert.*;
 
 public class TextFeaturesTest {
     private final SecretKeySpec key = new SecretKeySpec(new byte[32], "AES");
+    @Test public void liveTranslationSendsOnlySelectedTextAndRequestsBidirectionalLanguage() throws Exception {
+        String source = "00:00:05 Hello\n00:00:10 你好";
+        String translated = DeepSeekClient.translateLive(source, "test-key-1234567890", () -> false,
+            (request, apiKey, cancelled) -> {
+                assertEquals("test-key-1234567890", apiKey);
+                JSONArray messages = request.getJSONArray("messages");
+                assertEquals(source, messages.getJSONObject(1).getString("content"));
+                String instruction = messages.getJSONObject(0).getString("content");
+                assertTrue(instruction.contains("中文译成英文"));
+                assertTrue(instruction.contains("英文译成中文"));
+                assertFalse(request.toString().contains("audio"));
+                return "00:00:05 你好\n00:00:10 Hello";
+            });
+        assertTrue(translated.contains("Hello"));
+    }
     @Test public void textAndSummaryAreAuthenticatedCiphertext() throws Exception {
         byte[] text = "发言人 1：测试文字\n总结：测试结论".getBytes(StandardCharsets.UTF_8);
         byte[] blob = TextCrypto.encrypt(text, key, "record.enc");

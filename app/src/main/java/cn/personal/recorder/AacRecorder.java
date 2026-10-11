@@ -21,7 +21,10 @@ final class AacRecorder {
     private final String session = UUID.randomUUID().toString();
     private final long started = System.currentTimeMillis();
     private final ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+    private final Object pauseLock = new Object();
     private volatile boolean stop;
+    private volatile boolean pauseRequested;
+    private volatile long capturedSamples;
     private int sequence, chunkSamples;
     AacRecorder(Context c, String categoryId) throws Exception {
         context = c; key = new Vault(c).recordingKey();
@@ -29,8 +32,12 @@ final class AacRecorder {
     }
     String sessionId() { return session; }
     interface PcmSink { void accept(byte[] pcm, int count); }
-    void stop() { stop = true; }
-    void run(Runnable onChunk, Runnable onStarted, PcmSink liveText) throws Exception {
+    void stop() { stop = true; resume(); }
+    void pause() { pauseRequested = true; }
+    void resume() { synchronized (pauseLock) { pauseRequested = false; pauseLock.notifyAll(); } }
+    long durationMs() { return capturedSamples * 1000L / RATE; }
+    void run(Runnable onChunk, Runnable onStarted, PcmSink liveText, PcmSink meter,
+             Runnable onPaused, Runnable onResumed) throws Exception {
         if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED)
             throw new SecurityException("麦克风权限未授予");
         int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
@@ -55,6 +62,19 @@ final class AacRecorder {
             byte[] pcm = new byte[2048];
             long samples = 0;
             while (!stop) {
+                if (pauseRequested) {
+                    drain(codec, info, false, onChunk);
+                    flush(onChunk);
+                    record.stop(); onPaused.run();
+                    synchronized (pauseLock) {
+                        while (pauseRequested && !stop) pauseLock.wait(250);
+                    }
+                    if (stop) break;
+                    record.startRecording();
+                    if (record.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING)
+                        throw new IllegalStateException("麦克风无法继续录音");
+                    onResumed.run();
+                }
                 if (record.getActiveRecordingConfiguration() != null && record.getActiveRecordingConfiguration().isClientSilenced())
                     throw new IllegalStateException("麦克风已被系统静音或被其他应用占用");
                 int input = codec.dequeueInputBuffer(10_000);
@@ -65,13 +85,15 @@ final class AacRecorder {
                     if (liveText != null) {
                         try { liveText.accept(pcm, count); } catch (RuntimeException ignored) { /* Preview cannot interrupt recording. */ }
                     }
+                    long presentationUs = samples * 1_000_000L / RATE;
+                    samples += count / 2; capturedSamples = samples;
+                    if (meter != null) meter.accept(pcm, count);
                     buffer.clear(); buffer.put(pcm, 0, count);
-                    codec.queueInputBuffer(input, 0, count, samples * 1_000_000L / RATE, 0);
-                    samples += count / 2;
+                    codec.queueInputBuffer(input, 0, count, presentationUs, 0);
                 }
                 drain(codec, info, false, onChunk);
             }
-            record.stop();
+            if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) record.stop();
             long deadline = SystemClock.elapsedRealtime() + 5000;
             boolean eosQueued = false, eosReceived = false;
             while (!eosReceived && SystemClock.elapsedRealtime() < deadline) {

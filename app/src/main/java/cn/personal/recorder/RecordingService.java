@@ -19,8 +19,12 @@ import java.util.concurrent.TimeUnit;
 public final class RecordingService extends Service {
     static final String STOP = "cn.personal.recorder.STOP";
     static final String MARK = "cn.personal.recorder.MARK";
+    static final String PAUSE = "cn.personal.recorder.PAUSE";
+    static final String RESUME = "cn.personal.recorder.RESUME";
     static final String EXTRA_CATEGORY = "recording-category";
+    static final String EXTRA_MARK_NOTE = "mark-note";
     static volatile boolean active;
+    static volatile boolean paused;
     static volatile String state = "尚未录音";
     static volatile long startedElapsed;
     static volatile long stoppedElapsed;
@@ -28,6 +32,8 @@ public final class RecordingService extends Service {
     static volatile String session = "";
     static volatile int markCount;
     static volatile String markStatus = "";
+    static volatile AudioMeter meter;
+    static volatile long recordedMs;
     private AacRecorder recorder;
     private LiveTranscriber liveText;
     private PowerManager.WakeLock wakeLock;
@@ -43,12 +49,25 @@ public final class RecordingService extends Service {
             if (recorder != null) recorder.stop(); else finishRecording();
             return START_NOT_STICKY;
         }
+        if (intent != null && PAUSE.equals(intent.getAction())) {
+            if (active && !stopping && !paused && recorder != null) {
+                recorder.pause(); state = "正在暂停…";
+            }
+            return START_NOT_STICKY;
+        }
+        if (intent != null && RESUME.equals(intent.getAction())) {
+            if (active && !stopping && recorder != null) {
+                recorder.resume(); state = "正在继续录音…";
+            }
+            return START_NOT_STICKY;
+        }
         if (intent != null && MARK.equals(intent.getAction())) {
             if (active && !stopping && startedElapsed > 0 && !session.isEmpty()) {
                 String markedSession = session;
-                long offsetMs = android.os.SystemClock.elapsedRealtime() - startedElapsed;
+                long offsetMs = recorder == null ? 0 : recorder.durationMs();
+                String note = intent.getStringExtra(EXTRA_MARK_NOTE);
                 markWriter.execute(() -> {
-                    try { int saved = MomentStore.add(this, markedSession, offsetMs);
+                    try { int saved = MomentStore.add(this, markedSession, offsetMs, note);
                         if (markedSession.equals(session)) { markCount = saved; markStatus = "已标记 " + saved + " 处"; } }
                     catch (Exception e) { if (markedSession.equals(session)) markStatus = "标记保存失败"; }
                     main.post(() -> { if (active && markedSession.equals(session))
@@ -64,17 +83,20 @@ public final class RecordingService extends Service {
             nm.createNotificationChannel(new NotificationChannel("recording", "录音状态", NotificationManager.IMPORTANCE_LOW));
             startForeground(1, notification("正在准备录音"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             recorder = new AacRecorder(this, intent == null ? null : intent.getStringExtra(EXTRA_CATEGORY));
+            meter = new AudioMeter(); paused = false;
             session = recorder.sessionId(); markCount = 0; markStatus = "";
             if (new Vault(this).preferences().getBoolean("live-transcription-enabled", true) && !AnalysisService.busy)
                 liveText = LiveTranscriber.start(this, session, () -> main.post(this::onLiveFinished));
             liveDone = liveText == null;
             wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EncryptedRecorder:capture");
             wakeLock.acquire(60 * 60 * 1000L);
-            active = true; finalizing = false; startedElapsed = 0; stoppedElapsed = 0; state = "正在准备麦克风与编码器";
+            active = true; finalizing = false; startedElapsed = 0; stoppedElapsed = 0; recordedMs = 0;
+            state = "正在准备麦克风与编码器";
             if (new Vault(this).configured()) {
                 uploader = Executors.newSingleThreadScheduledExecutor();
                 uploader.scheduleWithFixedDelay(this::uploadOnce, 0, 30, TimeUnit.SECONDS);
             }
+            AudioMeter captureMeter = meter;
             Thread capture = new Thread(() -> {
                 boolean complete = false;
                 try {
@@ -84,7 +106,12 @@ public final class RecordingService extends Service {
                             state = "正在录音，音频约每 30 秒加密保存";
                             main.post(() -> getSystemService(NotificationManager.class).notify(1,
                                 notification(new Vault(this).configured() ? "本地加密 · 云端同步" : "本地加密保存")));
-                        }, liveText == null ? null : liveText::accept);
+                        }, liveText == null ? null : liveText::accept,
+                        (pcm, count) -> { captureMeter.accept(pcm, count); recordedMs = recorder.durationMs(); },
+                        () -> { paused = true; state = "录音已暂停"; captureMeter.clear();
+                            main.post(() -> getSystemService(NotificationManager.class).notify(1, notification(state))); },
+                        () -> { paused = false; state = "正在录音，音频约每 30 秒加密保存";
+                            main.post(() -> getSystemService(NotificationManager.class).notify(1, notification(state))); });
                     complete = true;
                     state = "录音已停止，密文已保存在本地";
                 } catch (Exception e) { state = "录音已停止：" + e.getMessage(); LaunchDiagnostics.serviceNote(this, "capture-failed:" + e.getClass().getSimpleName()); }
@@ -119,7 +146,8 @@ public final class RecordingService extends Service {
         PendingIntent stop = PendingIntent.getService(this, 2, new Intent(this, RecordingService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
         PendingIntent mark = PendingIntent.getService(this, 3, new Intent(this, RecordingService.class).setAction(MARK), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, "recording").setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle(finalizing ? "正在保存实时文字" : "Record 正在录音").setContentText(detail).setOngoing(true).setContentIntent(open)
+            .setContentTitle(finalizing ? "正在保存实时文字" : paused ? "Record 已暂停" : "Record 正在录音")
+            .setContentText(detail).setOngoing(true).setContentIntent(open)
             .addAction(new Notification.Action.Builder(null, "标记", mark).build())
             .addAction(new Notification.Action.Builder(null, "停止录音", stop).build()).build();
     }
@@ -141,7 +169,7 @@ public final class RecordingService extends Service {
     private void maybeFinish() { if (captureStopped && liveDone) finishRecording(); }
     private void finishRecording() {
         if (finished) return;
-        finished = true; active = false; finalizing = false;
+        finished = true; active = false; paused = false; finalizing = false; meter = null;
         if (uploader != null) uploader.shutdownNow();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         UploadWorker.schedule(this);
@@ -150,7 +178,7 @@ public final class RecordingService extends Service {
     @Override public void onDestroy() {
         markWriter.shutdown();
         if (recorder != null) recorder.stop();
-        active = false; finalizing = false;
+        active = false; paused = false; finalizing = false; meter = null;
         if (uploader != null) uploader.shutdownNow();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();

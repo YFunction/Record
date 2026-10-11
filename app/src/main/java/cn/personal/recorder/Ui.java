@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
@@ -80,6 +82,35 @@ final class Ui {
         Button button = button(text, action, false);
         button.setTextSize(14); button.setMinHeight(dp(44)); button.setMinWidth(0); button.setMinimumWidth(0);
         button.setPadding(dp(12), dp(7), dp(12), dp(7));
+        return button;
+    }
+    View iconButton(boolean gear, String description, Runnable action) {
+        View button = new View(activity) {
+            private final Paint pen = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                float unit = dp(1), cx = getWidth() / 2f, cy = getHeight() / 2f;
+                pen.setColor(accent); pen.setStyle(Paint.Style.STROKE);
+                pen.setStrokeWidth(dp(2)); pen.setStrokeCap(Paint.Cap.ROUND); pen.setStrokeJoin(Paint.Join.ROUND);
+                if (gear) {
+                    canvas.drawCircle(cx, cy, 7 * unit, pen);
+                    canvas.drawCircle(cx, cy, 2.7f * unit, pen);
+                    for (int i = 0; i < 8; i++) {
+                        double angle = i * Math.PI / 4;
+                        canvas.drawLine(cx + (float) Math.cos(angle) * 8.3f * unit,
+                            cy + (float) Math.sin(angle) * 8.3f * unit,
+                            cx + (float) Math.cos(angle) * 11f * unit,
+                            cy + (float) Math.sin(angle) * 11f * unit, pen);
+                    }
+                } else {
+                    canvas.drawCircle(cx - 2 * unit, cy - 2 * unit, 6.4f * unit, pen);
+                    canvas.drawLine(cx + 3 * unit, cy + 3 * unit, cx + 9.5f * unit, cy + 9.5f * unit, pen);
+                }
+            }
+        };
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22999999), shape(soft, 16), null));
+        button.setContentDescription(description);
+        button.setOnClickListener(v -> action.run());
         return button;
     }
     Button button(String text, Runnable action, boolean primary) {

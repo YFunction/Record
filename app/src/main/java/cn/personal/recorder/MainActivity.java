@@ -14,7 +14,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -35,25 +34,34 @@ public final class MainActivity extends Activity {
     private Ui ui;
     private int INK, MUTED, TEAL, RED;
     private Vault vault;
-    private TextView timer, state, mode, sync, playing, liveStatus, liveTranscript, markStatus;
-    private Button record, markButton;
+    private TextView timer, state, mode, sync, playing, liveStatus, liveTranscript, markStatus, translation;
+    private Button record, markButton, pauseButton, translateButton, modelButton;
+    private WaveformView waveform;
     private boolean resumed;
     private AlertDialog visibleDialog;
-    private LinearLayout library, categoryRail, liveCard;
+    private LinearLayout library, categoryRail, liveCard, recordingControls;
     private ScrollView liveScroll;
     private TextView libraryTitle, filterCaption;
-    private boolean launchHandled, libraryBusy;
+    private boolean launchHandled, libraryBusy, translationBusy;
     private static volatile boolean exportBusy;
     static volatile boolean playbackActive;
     private int ticks, playbackGeneration;
     private Boolean recordingUiActive;
-    private String librarySignature = "", exportSession, libraryFilter = "";
+    private String librarySignature = "", exportSession, libraryFilter = "", displayedSession = "";
     private MediaPlayer player;
     private RecordingSource playingSource;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService translationIo = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() { update(); handler.postDelayed(this, 1000); }
+    };
+    private final Runnable refreshWaveform = new Runnable() {
+        @Override public void run() {
+            if (!resumed) return;
+            waveform.show(RecordingService.meter, RecordingService.active && !RecordingService.paused);
+            handler.postDelayed(this, 90);
+        }
     };
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -65,7 +73,8 @@ public final class MainActivity extends Activity {
         if (saved != null) exportSession = saved.getString("export-session");
         LinearLayout root = ui.screen();
         LinearLayout header = row(); header.addView(ui.title("Record", 30), new LinearLayout.LayoutParams(0, -2, 1));
-        header.addView(ui.quietButton("设置", () -> unlocked(this::settings))); root.addView(header);
+        View settingsIcon = ui.iconButton(true, "设置", () -> unlocked(this::settings));
+        header.addView(settingsIcon, new LinearLayout.LayoutParams(dp(46), dp(46))); root.addView(header);
         root.addView(ui.title("内容分类", 19));
         HorizontalScrollView categoryScroll = new HorizontalScrollView(this); categoryScroll.setHorizontalScrollBarEnabled(false);
         categoryRail = row(); categoryRail.setPadding(0, dp(2), 0, dp(2)); categoryScroll.addView(categoryRail);
@@ -77,21 +86,33 @@ public final class MainActivity extends Activity {
         timer = label("00:00:00", 46, INK); timer.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL); timer.setGravity(Gravity.CENTER);
         timer.setAutoSizeTextTypeUniformWithConfiguration(24, 46, 1, android.util.TypedValue.COMPLEX_UNIT_SP); hero.addView(timer);
         state = label("准备就绪", 14, MUTED); state.setGravity(Gravity.CENTER); hero.addView(state);
-        record = button("开始录音", () -> { if (RecordingService.active) stopRecording(); else startRecording(); }, true);
-        record.setTextSize(18); record.setMinHeight(dp(64)); hero.addView(record, spaced());
-        markButton = button("标记这一刻", this::markMoment, false);
-        markButton.setVisibility(View.GONE); hero.addView(markButton);
-        markStatus = label("", 12, MUTED); markStatus.setGravity(Gravity.CENTER); markStatus.setVisibility(View.GONE); hero.addView(markStatus);
-        sync = label("", 12, MUTED); sync.setGravity(Gravity.CENTER); hero.addView(sync);
-        liveCard = card(root); liveCard.setVisibility(View.GONE);
-        liveCard.addView(ui.title("实时文字", 18));
+        waveform = new WaveformView(this, TEAL, ui.divider);
+        waveform.setVisibility(View.GONE); hero.addView(waveform, new LinearLayout.LayoutParams(-1, dp(68)));
+        liveCard = ui.column(10); liveCard.setBackground(ui.shape(ui.surface, 18)); liveCard.setVisibility(View.GONE);
+        hero.addView(liveCard, spaced());
+        liveCard.addView(ui.title("实时文字", 17));
         liveStatus = label("正在等待人声…", 12, MUTED); liveCard.addView(liveStatus);
         liveScroll = new ScrollView(this); liveScroll.setFillViewport(true);
-        liveTranscript = label("", 15, INK); liveScroll.addView(liveTranscript);
-        liveCard.addView(liveScroll, new LinearLayout.LayoutParams(-1, dp(180)));
-        liveCard.addView(label("手机本地识别的预览文字可能有误；停止后可进行完整转写与发言人区分。", 12, MUTED));
+        liveTranscript = label("正在等待识别结果…", 15, INK); liveScroll.addView(liveTranscript);
+        liveCard.addView(liveScroll, new LinearLayout.LayoutParams(-1, dp(88)));
+        modelButton = ui.quietButton("设置离线文字模型", () -> unlocked(this::settings));
+        modelButton.setVisibility(View.GONE); liveCard.addView(modelButton);
+        translation = label("", 14, TEAL); translation.setVisibility(View.GONE); liveCard.addView(translation);
+        LinearLayout controls = row();
+        pauseButton = ui.quietButton("暂停", this::togglePause);
+        controls.addView(pauseButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        markButton = ui.quietButton("打标签", this::markMoment);
+        controls.addView(markButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        translateButton = ui.quietButton("翻译", this::translateLive);
+        controls.addView(translateButton, new LinearLayout.LayoutParams(0, dp(44), 1));
+        controls.setVisibility(View.GONE); hero.addView(controls); recordingControls = controls;
+        record = button("开始录音", () -> { if (RecordingService.active) stopRecording(); else startRecording(); }, true);
+        record.setTextSize(18); record.setMinHeight(dp(56)); hero.addView(record, spaced());
+        markStatus = label("", 12, MUTED); markStatus.setGravity(Gravity.CENTER); markStatus.setVisibility(View.GONE); hero.addView(markStatus);
+        sync = label("", 12, MUTED); sync.setGravity(Gravity.CENTER); hero.addView(sync);
         LinearLayout heading = row(); libraryTitle = ui.title("最近录音", 19); heading.addView(libraryTitle, new LinearLayout.LayoutParams(0, -2, 1));
-        heading.addView(ui.quietButton("搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))))); root.addView(heading);
+        View searchIcon = ui.iconButton(false, "搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))));
+        heading.addView(searchIcon, new LinearLayout.LayoutParams(dp(46), dp(46))); root.addView(heading);
         filterCaption = label("全部分类", 12, MUTED); root.addView(filterCaption);
         playing = label("", 13, TEAL); playing.setVisibility(View.GONE); playing.setOnClickListener(v -> releasePlayer()); root.addView(playing);
         library = column(0); root.addView(library); renderLibrary(java.util.Collections.emptyList());
@@ -100,7 +121,9 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume(); resumed = true; ticks = 0; setShowWhenLocked(true);
-        handler.removeCallbacks(refresh); handler.post(refresh); handler.post(this::maybeAutoStart);
+        handler.removeCallbacks(refresh); handler.post(refresh);
+        handler.removeCallbacks(refreshWaveform); handler.post(refreshWaveform);
+        handler.post(this::maybeAutoStart);
     }
     private void maybeAutoStart() {
         // While-in-use microphone permission is checked when a foreground service is created.
@@ -115,8 +138,8 @@ public final class MainActivity extends Activity {
         if (!focused && liveCard != null) liveCard.setVisibility(View.GONE);
         if (focused && vault != null) { maybeAutoStart(); update(); }
     }
-    @Override protected void onPause() { resumed = false; handler.removeCallbacks(refresh); liveCard.setVisibility(View.GONE); releasePlayer(); super.onPause(); }
-    @Override protected void onDestroy() { io.shutdown(); super.onDestroy(); }
+    @Override protected void onPause() { resumed = false; handler.removeCallbacks(refresh); handler.removeCallbacks(refreshWaveform); liveCard.setVisibility(View.GONE); releasePlayer(); super.onPause(); }
+    @Override protected void onDestroy() { io.shutdown(); translationIo.shutdown(); super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle out) { out.putBoolean("handled", launchHandled); out.putString("export-session", exportSession); super.onSaveInstanceState(out); }
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent); setIntent(intent); launchHandled = intent.getBooleanExtra("settings", false);
@@ -126,14 +149,17 @@ public final class MainActivity extends Activity {
     }
     private void update() {
         boolean active = RecordingService.active;
-        long seconds = active && RecordingService.startedElapsed > 0
-            ? ((RecordingService.finalizing ? RecordingService.stoppedElapsed : SystemClock.elapsedRealtime()) - RecordingService.startedElapsed) / 1000 : 0;
+        long seconds = active ? RecordingService.recordedMs / 1000 : 0;
         timer.setText(duration(seconds));
         setTextIfChanged(state, active ? RecordingService.state : ("尚未录音".equals(RecordingService.state) ? "准备就绪 · 随时开始" : RecordingService.state));
-        setTextIfChanged(record, RecordingService.finalizing ? "正在保存文字…" : active ? "停止并保存" : "开始录音");
+        setTextIfChanged(record, RecordingService.finalizing ? "正在保存文字…" : active ? "结束并保存" : "开始录音");
         if (record.isEnabled() == RecordingService.finalizing) record.setEnabled(!RecordingService.finalizing);
-        markButton.setVisibility(active && !RecordingService.finalizing ? View.VISIBLE : View.GONE);
+        recordingControls.setVisibility(active && !RecordingService.finalizing ? View.VISIBLE : View.GONE);
+        waveform.setVisibility(active ? View.VISIBLE : View.GONE);
+        setTextIfChanged(pauseButton, RecordingService.paused ? "继续" : "暂停");
+        pauseButton.setEnabled(active && RecordingService.startedElapsed > 0);
         markButton.setEnabled(active && RecordingService.startedElapsed > 0);
+        translateButton.setEnabled(active && !translationBusy);
         markStatus.setVisibility(active && !RecordingService.markStatus.isEmpty() ? View.VISIBLE : View.GONE);
         setTextIfChanged(markStatus, RecordingService.markStatus);
         if (recordingUiActive == null || recordingUiActive != active) {
@@ -146,14 +172,20 @@ public final class MainActivity extends Activity {
         boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked();
         LiveTranscriber.Snapshot live = LiveTranscriber.snapshot;
         boolean liveEnabled = vault.preferences().getBoolean("live-transcription-enabled", true);
+        boolean modelReady = ModelManager.ready(this);
         boolean sameSession = !RecordingService.session.isEmpty() && RecordingService.session.equals(live.session);
-        if (resumed && hasWindowFocus() && !locked && liveEnabled && (active || sameSession && (live.busy || !live.preview.isEmpty()))) {
+        if (!RecordingService.session.equals(displayedSession)) {
+            displayedSession = RecordingService.session; translation.setVisibility(View.GONE); translation.setText("");
+        }
+        if (resumed && hasWindowFocus() && !locked && (active || sameSession && (live.busy || !live.preview.isEmpty()))) {
             liveCard.setVisibility(View.VISIBLE);
-            setTextIfChanged(liveStatus, sameSession ? live.status : AnalysisService.busy
-                ? "离线模型正在处理其他任务，本场暂不提供实时文字" : ModelManager.ready(this)
+            modelButton.setVisibility(liveEnabled && !modelReady ? View.VISIBLE : View.GONE);
+            setTextIfChanged(liveStatus, !liveEnabled ? "在设置中开启实时文字" : sameSession ? live.status : AnalysisService.busy
+                ? "离线模型正在处理其他任务，本场暂不提供实时文字" : modelReady
                 ? (live.busy ? "上一场实时文字仍在保存；本场录音继续加密保存" : "本场实时识别未启动；下次录音可重试")
                 : "安装离线模型后可在录音时显示文字");
-            String preview = sameSession && !live.preview.isEmpty() ? live.preview : "正在等待识别结果…";
+            String preview = sameSession && !live.preview.isEmpty() ? live.preview : !liveEnabled ? "请在设置中打开录音时实时显示文字" : !modelReady
+                ? "请先在设置中安装离线文字模型" : "正在等待识别结果…";
             if (!preview.contentEquals(liveTranscript.getText())) {
                 boolean atBottom = liveScroll.getScrollY() >= liveTranscript.getHeight() - liveScroll.getHeight() - dp(24);
                 liveTranscript.setText(preview);
@@ -192,9 +224,53 @@ public final class MainActivity extends Activity {
         }
     }
     private void stopRecording() { launchHandled = true; if (RecordingService.active) startService(new Intent(this, RecordingService.class).setAction(RecordingService.STOP)); }
+    private void togglePause() {
+        if (!RecordingService.active || RecordingService.finalizing) return;
+        startService(new Intent(this, RecordingService.class).setAction(RecordingService.paused ? RecordingService.RESUME : RecordingService.PAUSE));
+    }
     private void markMoment() {
         if (!RecordingService.active || RecordingService.startedElapsed <= 0) { toast("录音尚未开始"); return; }
-        startService(new Intent(this, RecordingService.class).setAction(RecordingService.MARK));
+        if (getSystemService(KeyguardManager.class).isKeyguardLocked()) { saveMark(""); return; }
+        EditText note = new EditText(this); note.setHint("可写关键词或一句备注（选填）");
+        note.setSingleLine(true); note.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(120)});
+        LinearLayout form = ui.column(18); form.addView(note);
+        showPrivate(new AlertDialog.Builder(this).setTitle("标记这一刻")
+            .setView(form).setNegativeButton("取消", null)
+            .setPositiveButton("保存标签", (dialog, which) -> saveMark(note.getText().toString())));
+    }
+    private void saveMark(String note) {
+        startService(new Intent(this, RecordingService.class).setAction(RecordingService.MARK)
+            .putExtra(RecordingService.EXTRA_MARK_NOTE, note));
+    }
+    private void translateLive() {
+        LiveTranscriber.Snapshot live = LiveTranscriber.snapshot;
+        if (!RecordingService.active || !RecordingService.session.equals(live.session) || live.preview.isEmpty()) {
+            toast("请等待实时文字出现后再翻译"); return;
+        }
+        String session = live.session;
+        if (!CategoryStore.aiAllowed(this, session)) { toast("当前分类未允许外部 AI 读取文字，可在设置中修改"); return; }
+        if (!vault.aiConfigured()) { toast("请先在设置中填写 DeepSeek Key"); return; }
+        String source = live.preview.length() > 5500 ? live.preview.substring(live.preview.length() - 5500) : live.preview;
+        showPrivate(new AlertDialog.Builder(this).setTitle("中英自动互译")
+            .setMessage("仅将当前可见的实时文字通过 HTTPS 发送给 DeepSeek，由模型逐句判断中文或英文并译成另一种语言。不会发送音频和录音密钥；服务商可读取文字，请求可能计费。译文只在本次页面显示。")
+            .setNegativeButton("取消", null).setPositiveButton("翻译", (dialog, which) -> {
+                translationBusy = true; translateButton.setEnabled(false);
+                translation.setText("正在翻译当前文字…"); translation.setVisibility(View.VISIBLE);
+                translationIo.execute(() -> {
+                    try {
+                        String result = DeepSeekClient.translateLive(source, vault.aiKey(), () -> !session.equals(RecordingService.session));
+                        handler.post(() -> {
+                            translationBusy = false; translateButton.setEnabled(true);
+                            if (!isDestroyed() && session.equals(RecordingService.session)) translation.setText(result);
+                        });
+                    } catch (Exception e) {
+                        handler.post(() -> {
+                            translationBusy = false; translateButton.setEnabled(true);
+                            if (!isDestroyed() && session.equals(RecordingService.session)) translation.setText("翻译失败：" + e.getMessage());
+                        });
+                    }
+                });
+            }));
     }
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
