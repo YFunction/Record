@@ -238,13 +238,17 @@ public class UiTest {
             for (int i = 0; i < 40; i++) lines.put(new JSONObject().put("start", i * 5).put("end", i * 5 + 5)
                 .put("speaker", 0).put("text", "这是一段较长的录音文字，用来检查全文折叠后的页面。"));
             document.set(activity, new JSONObject().put("version", 1).put("session", session).put("complete", true)
-                .put("segments", lines).put("names", new JSONObject()));
+                .put("segments", lines).put("names", new JSONObject()).put("summary", "会议决定：下周复核。"));
             java.lang.reflect.Field revision = TextActivity.class.getDeclaredField("revision"); revision.setAccessible(true); revision.set(activity, "none");
             java.lang.reflect.Field loading = TextActivity.class.getDeclaredField("loading"); loading.setAccessible(true); loading.setBoolean(activity, false);
             java.lang.reflect.Method update = TextActivity.class.getDeclaredMethod("update"); update.setAccessible(true); update.invoke(activity);
             java.lang.reflect.Method display = TextActivity.class.getDeclaredMethod("display"); display.setAccessible(true); display.invoke(activity);
             TextView expand = find(activity, "展开全部转写"); assertNotNull(expand); assertEquals(View.VISIBLE, expand.getVisibility());
             render(activity, "long-text-collapsed");
+            assertNotNull(find(activity, "会议决定：下周复核。"));
+            shadowOf(Looper.getMainLooper()).idle();
+            android.widget.ScrollView scroll = (android.widget.ScrollView) ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
+            assertEquals("普通打开录音详情时应停留在上方成果区", 0, scroll.getScrollY());
             expand.performClick(); assertNotNull(find(activity, "收起转写"));
             TextView button = find(activity, "生成 AI 总结"); assertNotNull(button); assertTrue(button.isEnabled());
             button.performClick();

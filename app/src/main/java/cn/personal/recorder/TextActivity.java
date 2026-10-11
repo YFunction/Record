@@ -76,7 +76,7 @@ public final class TextActivity extends Activity {
         LinearLayout notes = ui.card(root); notes.addView(ui.title("AI 总结", 18));
         summarize = ui.button("生成 AI 总结", () -> generate("summary"), false); notes.addView(summarize, ui.spaced());
         aiHint = ui.label("", 12, ui.muted); notes.addView(aiHint);
-        summary = ui.label("尚未生成总结", 15, ui.ink); summary.setTextIsSelectable(true); notes.addView(summary);
+        summary = ui.label("尚未生成总结；完成后会显示在这里", 15, ui.ink); summary.setTextIsSelectable(true); notes.addView(summary);
         LinearLayout outlineCard = ui.card(root); outlineCard.addView(ui.title("大纲", 18));
         makeOutline = ui.button("生成大纲", () -> generate("outline"), false); outlineCard.addView(makeOutline, ui.spaced());
         outline = ui.label("尚未生成大纲", 15, ui.ink); outline.setTextIsSelectable(true); outlineCard.addView(outline);
@@ -155,10 +155,10 @@ public final class TextActivity extends Activity {
             int segmentCount = document == null ? 0 : document.optJSONArray("segments") == null ? 0 : document.optJSONArray("segments").length();
             transcriptHint.setText(segmentCount == 0 ? "" : "共 " + segmentCount + " 段转写 · 点击时间点回听");
             transcriptToggle.setVisibility(segmentCount > 3 ? View.VISIBLE : View.GONE);
-            String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结" : value);
+            String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结；完成后会显示在这里" : value);
             String outlineText = document == null ? "" : document.optString("outline"); outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : outlineText);
             renderMindMap(document == null ? "" : document.optString("mindMap"));
-            if (!focusConsumed && document != null) {
+            if (!focusConsumed && document != null && (focusSegment >= 0 || !focusField.isEmpty())) {
                 focusConsumed = true;
                 View target = focusSegment >= 0 ? transcript : "AI 总结".equals(focusField) ? summary
                     : "大纲".equals(focusField) ? outline : "思维导图".equals(focusField) ? mindMap : transcript;
