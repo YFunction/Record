@@ -8,7 +8,11 @@ import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig;
 import com.k2fsa.sherpa.onnx.OfflineStream;
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.json.JSONArray;
@@ -33,6 +37,7 @@ final class LiveTranscriber {
     private final ArrayBlockingQueue<Window> pending = new ArrayBlockingQueue<>(3);
     private final WindowBuffer buffer = new WindowBuffer(WINDOW_SAMPLES);
     private final ArrayDeque<String> recent = new ArrayDeque<>();
+    private final ConcurrentLinkedQueue<long[]> missing = new ConcurrentLinkedQueue<>();
     private volatile boolean stopping, complete, skipped, failed;
     private int textChars;
 
@@ -52,14 +57,14 @@ final class LiveTranscriber {
         if (stopping || failed) return;
         buffer.offer(pcm, count, window -> {
             if (!pending.offer(window)) {
-                Arrays.fill(window.samples, 0f); skipped = true;
+                recordMissing(window);
             }
         });
     }
     void finish(boolean complete) {
         this.complete = complete;
         if (!failed) buffer.finish(window -> {
-            if (!pending.offer(window)) { Arrays.fill(window.samples, 0f); skipped = true; }
+            if (!pending.offer(window)) recordMissing(window);
         });
         stopping = true;
     }
@@ -80,7 +85,7 @@ final class LiveTranscriber {
                 Window window = pending.poll(250, TimeUnit.MILLISECONDS);
                 if (window == null) continue;
                 try {
-                    if (textChars >= MAX_TEXT_CHARS) { publish("实时预览已达上限，录音仍在保存", true); continue; }
+                    if (textChars >= MAX_TEXT_CHARS) { recordMissing(window); publish("实时预览已达上限，录音仍在保存", true); continue; }
                     OfflineStream stream = recognizer.createStream(); String text;
                     try {
                         stream.acceptWaveform(window.samples, RATE); recognizer.decode(stream);
@@ -98,9 +103,9 @@ final class LiveTranscriber {
                 } finally { Arrays.fill(window.samples, 0f); }
             }
             if (segments.length() > 0) {
-                document.put("complete", complete).put("previewSkipped", skipped || textChars >= MAX_TEXT_CHARS)
+                document.put("complete", complete).put("previewSkipped", skipped)
                     .put("engine", "SenseVoiceSmall-int8 live preview")
-                    .put("processedSamples", buffer.samplesSeen());
+                    .put("processedSamples", buffer.samplesSeen()).put("missingRanges", mergedMissing(missing));
                 TextStore.save(context, document);
                 publish(skipped ? "已加密保存部分实时文字；建议重新完整转写" : "实时文字已加密保存 · 可在录音详情中核对", false);
             } else publish("未识别到文字；可在录音详情中完整转写", false);
@@ -119,6 +124,24 @@ final class LiveTranscriber {
         StringBuilder text = new StringBuilder();
         for (String line : recent) { if (text.length() > 0) text.append('\n'); text.append(line); }
         snapshot = new Snapshot(session, text.toString(), status, working);
+    }
+    private void recordMissing(Window window) {
+        missing.add(new long[]{window.start, window.end}); skipped = true;
+        Arrays.fill(window.samples, 0f);
+    }
+    static JSONArray mergedMissing(Iterable<long[]> ranges) {
+        List<long[]> ordered = new ArrayList<>();
+        for (long[] range : ranges) if (range != null && range.length == 2 && range[0] >= 0 && range[1] > range[0]) ordered.add(range);
+        ordered.sort(Comparator.comparingLong(range -> range[0]));
+        JSONArray result = new JSONArray();
+        long start = -1, end = -1;
+        for (long[] range : ordered) {
+            if (start < 0) { start = range[0]; end = range[1]; }
+            else if (range[0] <= end) end = Math.max(end, range[1]);
+            else { result.put(new JSONArray().put((Object) (start / (double) RATE)).put((Object) (end / (double) RATE))); start = range[0]; end = range[1]; }
+        }
+        if (start >= 0) result.put(new JSONArray().put((Object) (start / (double) RATE)).put((Object) (end / (double) RATE)));
+        return result;
     }
     static final class Window {
         final float[] samples;

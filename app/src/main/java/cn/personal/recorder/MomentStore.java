@@ -17,7 +17,8 @@ final class MomentStore {
     static final class Mark {
         final long offsetMs;
         final String note;
-        Mark(long offsetMs, String note) { this.offsetMs = offsetMs; this.note = note; }
+        final String state;
+        Mark(long offsetMs, String note, String state) { this.offsetMs = offsetMs; this.note = note; this.state = state; }
     }
     private static File file(Context context, String session) throws IOException {
         if (!TextStore.validSession(session)) throw new IOException("录音编号无效");
@@ -32,7 +33,7 @@ final class MomentStore {
         List<Mark> result = new ArrayList<>(marks.length());
         for (int i = 0; i < marks.length(); i++) {
             JSONObject mark = marks.getJSONObject(i);
-            result.add(new Mark(mark.getLong("offsetMs"), mark.optString("note", "")));
+            result.add(new Mark(mark.getLong("offsetMs"), mark.optString("note", ""), state(mark.optString("state", "pending"))));
         }
         return result;
     }
@@ -57,7 +58,7 @@ final class MomentStore {
         if (marks.length() >= MAX_MARKS) throw new IOException("本场标记已达上限");
         if (marks.length() > 0 && offsetMs - marks.getJSONObject(marks.length() - 1).getLong("offsetMs") < 1000)
             return marks.length();
-        marks.put(new JSONObject().put("offsetMs", offsetMs).put("note", ""));
+        marks.put(new JSONObject().put("offsetMs", offsetMs).put("note", "").put("state", "pending"));
         return marks.length();
     }
     static synchronized void rename(Context context, String session, int index, String note) throws Exception {
@@ -66,6 +67,17 @@ final class MomentStore {
         if (index < 0 || index >= marks.length()) throw new IOException("找不到这一标记");
         marks.getJSONObject(index).put("note", note == null ? "" : note.trim().substring(0, Math.min(note.trim().length(), 120)));
         write(context, session, doc);
+    }
+    static synchronized void setState(Context context, String session, int index, String state) throws Exception {
+        JSONObject doc = read(context, session);
+        JSONArray marks = doc.getJSONArray("marks");
+        if (index < 0 || index >= marks.length()) throw new IOException("找不到这一标记");
+        marks.getJSONObject(index).put("state", state(state));
+        write(context, session, doc);
+    }
+    private static String state(String value) throws IOException {
+        if ("pending".equals(value) || "kept".equals(value) || "ignored".equals(value)) return value;
+        throw new IOException("瞬间状态无效");
     }
     static synchronized boolean delete(Context context, String session) {
         try { File file = file(context, session); return !file.exists() || file.delete(); }

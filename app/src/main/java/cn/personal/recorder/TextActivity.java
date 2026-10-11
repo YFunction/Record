@@ -35,7 +35,7 @@ public final class TextActivity extends Activity {
     private Ui ui;
     private String session, revision = "";
     private JSONObject document;
-    private TextView status, transcript, summary, outline, playbackStatus;
+    private TextView status, missingNotice, transcript, summary, outline, playbackStatus;
     private LinearLayout mindMap;
     private Button extract, summarize, makeOutline, makeMindMap;
     private boolean loading, changing;
@@ -65,6 +65,7 @@ public final class TextActivity extends Activity {
         LinearLayout actions = ui.card(root); actions.addView(ui.title("录音文字", 18));
         status = ui.label("读取加密记录…", 13, ui.muted); actions.addView(status);
         extract = ui.button("本地提取文字", this::extract, true); actions.addView(extract, ui.spaced());
+        missingNotice = ui.label("", 13, ui.danger); missingNotice.setVisibility(View.GONE); actions.addView(missingNotice);
         actions.addView(ui.label("录音时可在首页预览实时文字；停止后可在此进行更完整的离线转写与发言人区分。当前不支持导入外部音频。", 12, ui.muted));
         ui.action(actions, "取消当前处理", "保留已有结果；已发送的 AI 请求仍可能计费", () -> { if (AnalysisService.busy) startService(new Intent(this, AnalysisService.class).setAction(AnalysisService.CANCEL)); });
         ui.action(actions, "文字与 AI 设置", "离线模型、DeepSeek Key", () -> startActivity(new Intent(this, SettingsActivity.class)));
@@ -123,6 +124,23 @@ public final class TextActivity extends Activity {
     }
     private void display() {
         try {
+            boolean missed = document != null && document.optBoolean("previewSkipped");
+            extract.setText(missed ? "补全漏段 · 完整转写" : document == null ? "本地提取文字" : "重新完整转写");
+            missingNotice.setVisibility(missed ? View.VISIBLE : View.GONE);
+            if (missed) {
+                JSONArray ranges = document.optJSONArray("missingRanges");
+                if (ranges == null || ranges.length() == 0) missingNotice.setText("实时预览存在漏段。完整转写会在本机重新识别整场录音。");
+                else {
+                    StringBuilder gaps = new StringBuilder("实时预览漏掉 " + ranges.length() + " 段：");
+                    for (int i = 0; i < Math.min(3, ranges.length()); i++) {
+                        JSONArray range = ranges.optJSONArray(i);
+                        if (range != null && range.length() == 2) gaps.append(i == 0 ? " " : "、")
+                            .append(Transcript.time(range.optDouble(0))).append("–").append(Transcript.time(range.optDouble(1)));
+                    }
+                    if (ranges.length() > 3) gaps.append(" 等");
+                    missingNotice.setText(gaps + "。可在本机完整转写补全。");
+                }
+            }
             transcript.setText(document == null ? "尚未提取文字" : transcriptSpans(document));
             String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结" : value);
             String outlineText = document == null ? "" : document.optString("outline"); outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : outlineText);
@@ -201,8 +219,10 @@ public final class TextActivity extends Activity {
         if (!editable()) return; if (RecordingService.active) { toast("请先停止录音"); return; }
         if (!ModelManager.ready(this)) { toast("请先在设置中下载或导入离线模型"); startActivity(new Intent(this, SettingsActivity.class)); return; }
         EditText people = input(""); people.setHint("人数（可选，1～20；留空自动判断）"); people.setSingleLine(true); people.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(document == null ? "本地提取录音文字" : "重新提取录音文字？")
-            .setMessage("在手机上识别文字与发言人，音频不会发送给 AI。处理时会显示通知，可熄屏等待。已有修正和总结会在成功完成后被新转写替换，失败时保留旧结果。")
+        boolean corrected = document != null && document.optBoolean("manualEdited");
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(document == null ? "本地提取录音文字" : "重新完整转写？")
+            .setMessage("在手机上重新识别整场录音与发言人，音频不会发送给 AI。处理时会显示通知，可熄屏等待。"
+                + (corrected ? "\n\n这份文字已有人工修正。确认后，新转写成功时会替换修正文字及旧 AI 成果；如需保留，请先导出当前文字。" : "\n\n新转写成功后会替换当前文字及旧 AI 成果；失败时保留旧结果。"))
             .setView(people).setNegativeButton("取消", null).setPositiveButton("开始提取", null).create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             int count = -1; String value = people.getText().toString().trim();
@@ -255,7 +275,7 @@ public final class TextActivity extends Activity {
         } catch (Exception e) { toast("没有可修改的文字"); }
     }
     private void saveEdit(JSONObject doc) throws Exception {
-        doc.put("summary", "").put("outline", "").put("mindMap", "").remove("summaryModel");
+        doc.put("manualEdited", true).put("summary", "").put("outline", "").put("mindMap", "").remove("summaryModel");
         doc.remove("summaryAt"); doc.remove("outlineModel"); doc.remove("outlineAt"); doc.remove("mindMapModel"); doc.remove("mindMapAt"); changing = true;
         io.execute(() -> { try { TextStore.save(this, doc); handler.post(() -> { changing = false; revision = ""; update(); toast("已加密保存，旧 AI 成果已清除，可重新生成"); }); }
             catch (Exception e) { handler.post(() -> { changing = false; toast("保存失败，原记录保留"); }); } });

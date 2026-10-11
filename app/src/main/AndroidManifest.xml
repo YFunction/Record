@@ -23,6 +23,7 @@
         <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".CategoryActivity" android:exported="false" />
         <activity android:name=".SearchActivity" android:exported="false" />
+        <activity android:name=".MomentInboxActivity" android:exported="false" />
         <activity android:name=".TextActivity" android:exported="false" />
         <service android:name=".AnalysisService" android:exported="false" android:foregroundServiceType="mediaProcessing|dataSync" />
         <service android:name=".RecordingService" android:exported="false"

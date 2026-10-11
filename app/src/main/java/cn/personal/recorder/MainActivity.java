@@ -110,6 +110,7 @@ public final class MainActivity extends Activity {
         record.setTextSize(18); record.setMinHeight(dp(56)); hero.addView(record, spaced());
         markStatus = label("", 12, MUTED); markStatus.setGravity(Gravity.CENTER); markStatus.setVisibility(View.GONE); hero.addView(markStatus);
         sync = label("", 12, MUTED); sync.setGravity(Gravity.CENTER); hero.addView(sync);
+        ui.action(root, "瞬间收件箱", "回听前后文，整理录音中的标记", () -> unlocked(() -> startActivity(new Intent(this, MomentInboxActivity.class))));
         LinearLayout heading = row(); libraryTitle = ui.title("最近录音", 19); heading.addView(libraryTitle, new LinearLayout.LayoutParams(0, -2, 1));
         View searchIcon = ui.iconButton(false, "搜索", () -> unlocked(() -> startActivity(new Intent(this, SearchActivity.class).putExtra("category", libraryFilter))));
         heading.addView(searchIcon, new LinearLayout.LayoutParams(dp(46), dp(46))); root.addView(heading);
@@ -429,7 +430,8 @@ public final class MainActivity extends Activity {
                         for (int i = 0; i < marks.size(); i++) {
                             int index = i; MomentStore.Mark mark = marks.get(i);
                             widgets.action(actions, Transcript.time(mark.offsetMs / 1000.0),
-                                mark.note.isEmpty() ? "回听或添加备注" : mark.note, () -> {
+                                ("kept".equals(mark.state) ? "已保留 · " : "ignored".equals(mark.state) ? "已忽略 · " : "待整理 · ")
+                                    + (mark.note.isEmpty() ? "回听或添加备注" : mark.note), () -> {
                                     sheet[0].dismiss(); momentActions(entry, index, mark);
                                 });
                         }

@@ -2,6 +2,7 @@ package cn.personal.recorder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Arrays;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -25,5 +26,13 @@ public class LiveTranscriberTest {
         assertEquals(-1 / 32768f, windows.get(0).samples[3], 0f);
         assertEquals(0.5f, windows.get(1).samples[0], 0f);
         assertEquals(-0.5f, windows.get(1).samples[1], 0f);
+    }
+    @Test public void skippedWindowsMergeIntoReviewableTimeRanges() {
+        org.json.JSONArray ranges = LiveTranscriber.mergedMissing(Arrays.asList(
+            new long[]{160000, 240000}, new long[]{80000, 160000}, new long[]{400000, 480000}));
+        assertEquals(2, ranges.length());
+        assertEquals(5.0, ranges.optJSONArray(0).optDouble(0), 0.001);
+        assertEquals(15.0, ranges.optJSONArray(0).optDouble(1), 0.001);
+        assertEquals(25.0, ranges.optJSONArray(1).optDouble(0), 0.001);
     }
 }

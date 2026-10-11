@@ -15,6 +15,7 @@ public class MomentStoreTest {
         assertEquals(1, MomentStore.append(doc, 4900));
         assertEquals(2, MomentStore.append(doc, 5600));
         assertEquals(4500, doc.getJSONArray("marks").getJSONObject(0).getLong("offsetMs"));
+        assertEquals("pending", doc.getJSONArray("marks").getJSONObject(0).getString("state"));
         assertEquals(5600, doc.getJSONArray("marks").getJSONObject(1).getLong("offsetMs"));
         try { MomentStore.append(doc, -1); fail("negative offset accepted"); }
         catch (IOException expected) { assertTrue(expected.getMessage().contains("尚未开始")); }
