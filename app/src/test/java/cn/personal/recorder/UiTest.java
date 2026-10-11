@@ -19,6 +19,8 @@ import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -224,6 +226,34 @@ public class UiTest {
             TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
             assertEquals(activity.getColor(R.color.ink), find(activity, "录音文字").getCurrentTextColor());
             assertFalse(find(activity, "生成 AI 总结").isEnabled()); assertNull(shadowOf(activity).getNextStartedService()); render(activity, "dark-text");
+        }
+    }
+    @Test public void summaryButtonOpensCategoryPermissionWhenTranscriptExists() throws Exception {
+        String session = "10000000-0000-4000-8000-000000000001";
+        Intent intent = new Intent(RuntimeEnvironment.getApplication(), TextActivity.class).putExtra("session", session);
+        try (ActivityController<TextActivity> controller = Robolectric.buildActivity(TextActivity.class, intent).setup()) {
+            TextActivity activity = controller.get(); shadowOf(Looper.getMainLooper()).idle();
+            java.lang.reflect.Field document = TextActivity.class.getDeclaredField("document"); document.setAccessible(true);
+            JSONArray lines = new JSONArray();
+            for (int i = 0; i < 40; i++) lines.put(new JSONObject().put("start", i * 5).put("end", i * 5 + 5)
+                .put("speaker", 0).put("text", "这是一段较长的录音文字，用来检查全文折叠后的页面。"));
+            document.set(activity, new JSONObject().put("version", 1).put("session", session).put("complete", true)
+                .put("segments", lines).put("names", new JSONObject()));
+            java.lang.reflect.Field revision = TextActivity.class.getDeclaredField("revision"); revision.setAccessible(true); revision.set(activity, "none");
+            java.lang.reflect.Field loading = TextActivity.class.getDeclaredField("loading"); loading.setAccessible(true); loading.setBoolean(activity, false);
+            java.lang.reflect.Method update = TextActivity.class.getDeclaredMethod("update"); update.setAccessible(true); update.invoke(activity);
+            java.lang.reflect.Method display = TextActivity.class.getDeclaredMethod("display"); display.setAccessible(true); display.invoke(activity);
+            TextView expand = find(activity, "展开全部转写"); assertNotNull(expand); assertEquals(View.VISIBLE, expand.getVisibility());
+            render(activity, "long-text-collapsed");
+            expand.performClick(); assertNotNull(find(activity, "收起转写"));
+            TextView button = find(activity, "生成 AI 总结"); assertNotNull(button); assertTrue(button.isEnabled());
+            button.performClick();
+            AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog(); assertNotNull(dialog);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            shadowOf(Looper.getMainLooper()).idle();
+            Intent destination = shadowOf(activity).getNextStartedActivity(); assertNotNull(destination);
+            assertEquals(CategoryActivity.class.getName(), destination.getComponent().getClassName());
+            assertNull(shadowOf(activity).getNextStartedService());
         }
     }
 }

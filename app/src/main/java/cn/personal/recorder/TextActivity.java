@@ -8,6 +8,7 @@ import android.media.MediaPlayer;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
+import android.text.TextUtils;
 import android.text.method.LinkMovementMethod;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.ClickableSpan;
@@ -35,9 +36,9 @@ public final class TextActivity extends Activity {
     private Ui ui;
     private String session, revision = "";
     private JSONObject document;
-    private TextView status, missingNotice, transcript, summary, outline, playbackStatus;
+    private TextView status, missingNotice, transcript, transcriptHint, summary, outline, playbackStatus, aiHint;
     private LinearLayout mindMap;
-    private Button extract, summarize, makeOutline, makeMindMap;
+    private Button extract, summarize, makeOutline, makeMindMap, transcriptToggle;
     private boolean loading, changing;
     private boolean categoryAiAllowed;
     private String categoryName = "未分类";
@@ -48,6 +49,7 @@ public final class TextActivity extends Activity {
     private int focusSegment = -1, focusOffset = -1, activePlaybackSegment = -1, highlightOffset = -1;
     private String focusField = "";
     private boolean focusConsumed;
+    private boolean transcriptExpanded;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -69,17 +71,11 @@ public final class TextActivity extends Activity {
         actions.addView(ui.label("录音时可在首页预览实时文字；停止后可在此进行更完整的离线转写与发言人区分。当前不支持导入外部音频。", 12, ui.muted));
         ui.action(actions, "取消当前处理", "保留已有结果；已发送的 AI 请求仍可能计费", () -> { if (AnalysisService.busy) startService(new Intent(this, AnalysisService.class).setAction(AnalysisService.CANCEL)); });
         ui.action(actions, "文字与 AI 设置", "离线模型、DeepSeek Key", () -> startActivity(new Intent(this, SettingsActivity.class)));
-        LinearLayout result = ui.card(root); result.addView(ui.title("录音文字", 18));
-        result.addView(ui.label("发言人编号为估计结果，重叠说话与噪声可能造成误分，请核对。", 12, ui.muted));
-        ui.action(result, "修改发言人称呼", "可改为你确认的姓名；修改后需重新总结", this::rename);
-        ui.action(result, "修正转写文字", "按时间选择片段修改；修改后需重新总结", this::editSegment);
-        playbackStatus = ui.label("点击蓝色时间点回听；播放时高亮当前片段", 12, ui.muted); playbackStatus.setOnClickListener(v -> stopPlayback()); result.addView(playbackStatus);
-        transcript = ui.label("尚未提取文字", 15, ui.ink); transcript.setTextIsSelectable(false);
-        transcript.setMovementMethod(LinkMovementMethod.getInstance()); transcript.setHighlightColor(Color.TRANSPARENT); result.addView(transcript);
         root.addView(ui.label("内容成果", 21, ui.ink));
         root.addView(ui.label("根据当前转写生成；结果在手机加密保存。外部 AI 只会在你确认后收到文字。", 12, ui.muted));
         LinearLayout notes = ui.card(root); notes.addView(ui.title("AI 总结", 18));
         summarize = ui.button("生成 AI 总结", () -> generate("summary"), false); notes.addView(summarize, ui.spaced());
+        aiHint = ui.label("", 12, ui.muted); notes.addView(aiHint);
         summary = ui.label("尚未生成总结", 15, ui.ink); summary.setTextIsSelectable(true); notes.addView(summary);
         LinearLayout outlineCard = ui.card(root); outlineCard.addView(ui.title("大纲", 18));
         makeOutline = ui.button("生成大纲", () -> generate("outline"), false); outlineCard.addView(makeOutline, ui.spaced());
@@ -87,6 +83,17 @@ public final class TextActivity extends Activity {
         LinearLayout mapCard = ui.card(root); mapCard.addView(ui.title("思维导图", 18));
         makeMindMap = ui.button("生成思维导图", () -> generate("mindmap"), false); mapCard.addView(makeMindMap, ui.spaced());
         mindMap = ui.column(0); mapCard.addView(mindMap);
+        LinearLayout result = ui.card(root); result.addView(ui.title("录音文字", 18));
+        result.addView(ui.label("发言人编号为估计结果，重叠说话与噪声可能造成误分，请核对。", 12, ui.muted));
+        ui.action(result, "修改发言人称呼", "可改为你确认的姓名；修改后需重新总结", this::rename);
+        ui.action(result, "修正转写文字", "按时间选择片段修改；修改后需重新总结", this::editSegment);
+        playbackStatus = ui.label("点击蓝色时间点回听；播放时高亮当前片段", 12, ui.muted); playbackStatus.setOnClickListener(v -> stopPlayback()); result.addView(playbackStatus);
+        transcriptHint = ui.label("", 12, ui.muted); result.addView(transcriptHint);
+        transcriptToggle = ui.quietButton("展开全部转写", () -> setTranscriptExpanded(!transcriptExpanded)); transcriptToggle.setVisibility(View.GONE); result.addView(transcriptToggle, ui.spaced());
+        transcript = ui.label("尚未提取文字", 15, ui.ink); transcript.setTextIsSelectable(false);
+        transcript.setMovementMethod(LinkMovementMethod.getInstance()); transcript.setHighlightColor(Color.TRANSPARENT); result.addView(transcript);
+        if (focusSegment >= 0 || "录音文字".equals(focusField)) setTranscriptExpanded(true);
+        else setTranscriptExpanded(false);
         LinearLayout exports = ui.card(root); exports.addView(ui.title("导出与分享", 18));
         exports.addView(ui.label("保留时间戳、发言人和当前成果。导出文件为明文，请保存到受控位置。", 12, ui.muted));
         ui.action(exports, "导出 Markdown", "适合归档、编辑和电脑端查看", () -> export(31));
@@ -103,17 +110,20 @@ public final class TextActivity extends Activity {
     private void update() {
         boolean liveBusy = LiveTranscriber.isBusyFor(session);
         boolean busy = AnalysisService.busy || liveBusy || changing || loading; boolean aiAllowed = categoryAiAllowed;
-        boolean canGenerate = !busy && document != null && aiAllowed;
+        boolean canGenerate = !busy && document != null;
         extract.setEnabled(!busy && !RecordingService.active); summarize.setEnabled(canGenerate); makeOutline.setEnabled(canGenerate); makeMindMap.setEnabled(canGenerate);
         extract.setAlpha(extract.isEnabled() ? 1f : 0.45f); summarize.setAlpha(summarize.isEnabled() ? 1f : 0.45f);
         makeOutline.setAlpha(makeOutline.isEnabled() ? 1f : 0.45f); makeMindMap.setAlpha(makeMindMap.isEnabled() ? 1f : 0.45f);
+        aiHint.setText(document == null ? "先提取录音文字" : !aiAllowed
+            ? "当前分类尚未允许外部 AI。点击生成后可前往分类权限设置；文字不会自动发送。"
+            : !new Vault(this).aiConfigured() ? "尚未设置 DeepSeek Key。点击生成后可前往设置。" : "点击生成后仍需确认发送文字。");
         if (liveBusy) status.setText("正在加密保存实时文字，请稍后再进行完整转写或总结");
         else if (AnalysisService.busy) status.setText(AnalysisService.session.isEmpty() || session.equals(AnalysisService.session) ? AnalysisService.state : "正在处理另一场录音");
         else status.setText(!aiAllowed ? "本分类禁止向外部 AI 发送文字 · 可在设置 → 分类管理中更改" : (!AnalysisService.state.isEmpty() && (session.equals(AnalysisService.session) || AnalysisService.session.isEmpty()) ? AnalysisService.state : "文字与总结在手机加密保存，按云端设置同步"));
         File file = TextStore.latest(this, session); String name = file == null ? "none" : file.getName();
         if (!loading && !changing && !name.equals(revision) && !io.isShutdown()) {
             loading = true; io.execute(() -> {
-                try { JSONObject doc = TextStore.read(this, session); handler.post(() -> { loading = false; if (isDestroyed()) return; document = doc; revision = name; display(); }); }
+                try { JSONObject doc = TextStore.read(this, session); handler.post(() -> { loading = false; if (isDestroyed()) return; document = doc; revision = name; display(); update(); }); }
                 catch (Exception e) { handler.post(() -> { loading = false; revision = name; toast("无法解密文字记录，请检查密钥和文件"); }); }
             });
         }
@@ -142,6 +152,9 @@ public final class TextActivity extends Activity {
                 }
             }
             transcript.setText(document == null ? "尚未提取文字" : transcriptSpans(document));
+            int segmentCount = document == null ? 0 : document.optJSONArray("segments") == null ? 0 : document.optJSONArray("segments").length();
+            transcriptHint.setText(segmentCount == 0 ? "" : "共 " + segmentCount + " 段转写 · 点击时间点回听");
+            transcriptToggle.setVisibility(segmentCount > 3 ? View.VISIBLE : View.GONE);
             String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结" : value);
             String outlineText = document == null ? "" : document.optString("outline"); outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : outlineText);
             renderMindMap(document == null ? "" : document.optString("mindMap"));
@@ -186,6 +199,12 @@ public final class TextActivity extends Activity {
             }
         }
         return text.length() == 0 ? "尚未提取文字" : text;
+    }
+    private void setTranscriptExpanded(boolean expanded) {
+        transcriptExpanded = expanded;
+        transcript.setMaxLines(expanded ? Integer.MAX_VALUE : 7);
+        transcript.setEllipsize(expanded ? null : TextUtils.TruncateAt.END);
+        transcriptToggle.setText(expanded ? "收起转写" : "展开全部转写");
     }
     private void renderMindMap(String serialized) {
         mindMap.removeAllViews();
@@ -232,7 +251,12 @@ public final class TextActivity extends Activity {
     }
     private void generate(String kind) {
         if (!editable() || document == null) return;
-        if (!CategoryStore.aiAllowed(this, session)) { toast("本分类未允许 DeepSeek 读取文字；可在设置 → 分类管理中明确开启"); startActivity(new Intent(this, CategoryActivity.class)); return; }
+        if (!CategoryStore.aiAllowed(this, session)) {
+            new AlertDialog.Builder(this).setTitle("先开启分类 AI 权限")
+                .setMessage("“" + CategoryStore.aiPolicy(this, session) + "”分类目前禁止向外部 AI 发送文字。开启权限后仍需逐次确认生成；此操作不会发送当前文字。")
+                .setNegativeButton("取消", null).setPositiveButton("管理分类权限", (d, w) -> startActivity(new Intent(this, CategoryActivity.class))).show();
+            return;
+        }
         if (!new Vault(this).aiConfigured()) { toast("请先在设置中填写 DeepSeek Key"); startActivity(new Intent(this, SettingsActivity.class)); return; }
         int parts;
         try { parts = Transcript.parts(Transcript.text(document), 20000).size(); } catch (Exception e) { toast("请先提取有效的录音文字"); return; }
@@ -376,6 +400,7 @@ public final class TextActivity extends Activity {
             int segment = Transcript.segmentAt(document, position);
             if (segment == activePlaybackSegment) return;
             activePlaybackSegment = segment;
+            if (segment >= 0 && !transcriptExpanded) setTranscriptExpanded(true);
             transcript.setText(transcriptSpans(document));
             if (segment >= 0) transcript.post(this::followPlaybackSegment);
         } catch (Exception e) { stopPlayback(); }
