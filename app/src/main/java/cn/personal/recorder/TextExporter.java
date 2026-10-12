@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.json.JSONArray;
@@ -18,6 +20,45 @@ import org.json.JSONObject;
 /** User-initiated plaintext exports. Callers must disclose the destination and obtain consent. */
 final class TextExporter {
     private TextExporter() {}
+
+    enum Scope {
+        ALL("完整记录", "完整记录"), TRANSCRIPT("录音文字", "录音文字"),
+        SUMMARY("AI 总结", "AI总结"), ABSTRACT("摘要", "摘要"),
+        OUTLINE("大纲", "大纲"), MINDMAP("思维导图", "思维导图");
+        final String label, filename;
+        Scope(String label, String filename) { this.label = label; this.filename = filename; }
+    }
+
+    private static final Pattern ABSTRACT_HEADING = Pattern.compile("^(?:#{1,6}\\s*)?摘要\\s*[:：]?\\s*(.*)$");
+    private static final Pattern NEXT_SECTION = Pattern.compile("^#{1,6}\\s+.+$|^[^:：]+[:：]\\s*$");
+
+    static String abstractMarkdown(JSONObject doc) {
+        String summary = doc.optString("summary");
+        StringBuilder result = new StringBuilder(); boolean found = false;
+        for (String line : summary.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
+            if (!found) {
+                Matcher heading = ABSTRACT_HEADING.matcher(line.trim().replace("**", ""));
+                if (heading.matches()) { found = true; if (!heading.group(1).isEmpty()) result.append(heading.group(1)).append('\n'); }
+            } else {
+                if (NEXT_SECTION.matcher(line.trim().replace("**", "")).matches()) break;
+                result.append(line).append('\n');
+            }
+        }
+        return result.toString().trim();
+    }
+
+    static boolean available(JSONObject doc, Scope scope) {
+        if (doc == null) return false;
+        switch (scope) {
+            case ALL: return true;
+            case TRANSCRIPT: return Transcript.hasContent(doc);
+            case SUMMARY: return !doc.optString("summary").trim().isEmpty();
+            case ABSTRACT: return !abstractMarkdown(doc).isEmpty();
+            case OUTLINE: return !doc.optString("outline").trim().isEmpty();
+            case MINDMAP: return !doc.optString("mindMap").trim().isEmpty();
+            default: return false;
+        }
+    }
 
     static String markdown(JSONObject doc) throws Exception {
         StringBuilder out = new StringBuilder("# 录音记录\n\n");
@@ -33,8 +74,33 @@ final class TextExporter {
         return out.toString();
     }
 
+    static String markdown(JSONObject doc, Scope scope) throws Exception {
+        if (scope == Scope.ALL) return markdown(doc);
+        if (!available(doc, scope)) throw new java.io.IOException(scope.label + "尚无可导出内容");
+        StringBuilder out = new StringBuilder("# ").append(scope.label).append("\n\n");
+        switch (scope) {
+            case TRANSCRIPT: out.append(Transcript.text(doc)); break;
+            case SUMMARY: out.append(doc.optString("summary")); break;
+            case ABSTRACT: out.append(abstractMarkdown(doc)); break;
+            case OUTLINE: out.append(doc.optString("outline")); break;
+            case MINDMAP:
+                try { appendMindMap(out, new JSONObject(doc.optString("mindMap")), 0); }
+                catch (Exception e) { throw new java.io.IOException("思维导图格式无效", e); }
+                break;
+            default: throw new IllegalArgumentException("导出范围无效");
+        }
+        return out.append('\n').toString();
+    }
+
     static String plainText(JSONObject doc) throws Exception {
-        return markdown(doc).replace("# ", "").replace("## ", "").replace("### ", "");
+        return plainText(doc, Scope.ALL);
+    }
+
+    static String plainText(JSONObject doc, Scope scope) throws Exception {
+        String source = markdown(doc, scope);
+        return source.replaceAll("(?m)^#{1,6}\\s+", "")
+            .replaceAll("\\[([^]]+)]\\(([^)]+)\\)", "$1 ($2)")
+            .replace("**", "").replace("__", "").replace("~~", "").replace("`", "");
     }
 
     /** Uses existing segment boundaries; no word-level timing is inferred. */
@@ -78,7 +144,11 @@ final class TextExporter {
     }
 
     static void writeDocx(JSONObject doc, OutputStream destination) throws Exception {
-        byte[] xml = wordDocument(plainText(doc)).getBytes(StandardCharsets.UTF_8);
+        writeDocx(doc, Scope.ALL, destination);
+    }
+
+    static void writeDocx(JSONObject doc, Scope scope, OutputStream destination) throws Exception {
+        byte[] xml = wordDocument(plainText(doc, scope)).getBytes(StandardCharsets.UTF_8);
         ZipOutputStream zip = new ZipOutputStream(destination, StandardCharsets.UTF_8);
         try {
             put(zip, "[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -121,10 +191,14 @@ final class TextExporter {
     }
 
     static void writePdf(Context context, JSONObject doc, OutputStream destination) throws Exception {
+        writePdf(context, doc, Scope.ALL, destination);
+    }
+
+    static void writePdf(Context context, JSONObject doc, Scope scope, OutputStream destination) throws Exception {
         PdfDocument pdf = new PdfDocument(); Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(0xff20242b); paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL)); paint.setTextSize(11.5f);
         Paint heading = new Paint(paint); heading.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD)); heading.setTextSize(14f);
-        List<String> lines = wrap(plainText(doc), paint, 510f);
+        List<String> lines = wrap(plainText(doc, scope), paint, 510f);
         final int pageWidth = 595, pageHeight = 842; final float left = 42f, top = 46f, bottom = 48f, lineHeight = 17f;
         int pageNumber = 0, index = 0;
         try {

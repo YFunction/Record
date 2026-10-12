@@ -97,7 +97,7 @@ public final class TextActivity extends Activity {
         if (focusSegment >= 0 || "录音文字".equals(focusField)) setTranscriptExpanded(true);
         else setTranscriptExpanded(false);
         LinearLayout exports = ui.card(root); exports.addView(ui.title("导出与分享", 18));
-        exports.addView(ui.label("保留时间戳、发言人和当前成果。导出文件为明文，请保存到受控位置。", 12, ui.muted));
+        exports.addView(ui.label("可选择完整记录、录音文字或单项成果。导出文件为明文，请保存到受控位置。", 12, ui.muted));
         ui.action(exports, "导出 Markdown", "适合归档、编辑和电脑端查看", () -> export(31));
         ui.action(exports, "导出 Word", "生成 .docx 文档", () -> export(32));
         ui.action(exports, "导出 PDF", "生成便于阅读和打印的文档", () -> export(33));
@@ -167,8 +167,10 @@ public final class TextActivity extends Activity {
             int segmentCount = document == null ? 0 : document.optJSONArray("segments") == null ? 0 : document.optJSONArray("segments").length();
             transcriptHint.setText(segmentCount == 0 ? "" : "共 " + segmentCount + " 段转写 · 点击时间点回听");
             transcriptToggle.setVisibility(segmentCount > 3 ? View.VISIBLE : View.GONE);
-            String value = document == null ? "" : document.optString("summary"); summary.setText(value.isEmpty() ? "尚未生成总结；完成后会显示在这里" : value);
-            String outlineText = document == null ? "" : document.optString("outline"); outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : outlineText);
+            String value = document == null ? "" : document.optString("summary");
+            summary.setText(value.isEmpty() ? "尚未生成总结；完成后会显示在这里" : MarkdownRenderer.render(value, ui));
+            String outlineText = document == null ? "" : document.optString("outline");
+            outline.setText(outlineText.isEmpty() ? "尚未生成大纲" : MarkdownRenderer.render(outlineText, ui));
             renderMindMap(document == null ? "" : document.optString("mindMap"));
             if (!focusConsumed && document != null && (focusSegment >= 0 || !focusField.isEmpty())) {
                 focusConsumed = true;
@@ -320,52 +322,76 @@ public final class TextActivity extends Activity {
     private void export(int format) {
         if (!editable() || document == null) return;
         boolean subtitle = format == 34 || format == 35;
+        if (!subtitle) { chooseScope(scope -> export(format, scope)); return; }
+        export(format, TextExporter.Scope.ALL);
+    }
+    private interface ScopeAction { void run(TextExporter.Scope scope); }
+    private void chooseScope(ScopeAction action) {
+        java.util.ArrayList<TextExporter.Scope> scopes = new java.util.ArrayList<>();
+        for (TextExporter.Scope scope : TextExporter.Scope.values())
+            if (TextExporter.available(document, scope)) scopes.add(scope);
+        String[] labels = new String[scopes.size()];
+        for (int i = 0; i < scopes.size(); i++) labels[i] = scopes.get(i).label;
+        new AlertDialog.Builder(this).setTitle("选择内容").setItems(labels, (dialog, which) -> action.run(scopes.get(which)))
+            .setNegativeButton("取消", null).show();
+    }
+    private void export(int format, TextExporter.Scope scope) {
+        if (!editable() || document == null) return;
+        boolean subtitle = format == 34 || format == 35;
         if (subtitle) try { TextExporter.subtitles(document, format == 35); }
         catch (Exception e) { toast("尚无有效字幕片段，请先提取或修正转写文字"); return; }
         String title = format == 31 ? "Markdown" : format == 32 ? "Word" : format == 33 ? "PDF" : format == 34 ? "SRT 字幕" : "VTT 字幕";
         String subtitleNotice = subtitle && (!document.optBoolean("complete", false) || document.optBoolean("previewSkipped"))
             ? "\n\n这份文字来自部分录音或实时预览有漏段，字幕也会缺少相应内容；建议先运行完整转写。" : "";
-        new AlertDialog.Builder(this).setTitle("导出" + title)
+        new AlertDialog.Builder(this).setTitle("导出" + (subtitle ? title : scope.label + " · " + title))
             .setMessage(subtitle ? "字幕按已有转写片段的开始和结束时间生成，可能包含识别误差、发言人误分和较长片段；不推测逐字时间。导出文件是未加密明文，请核对内容并保存到受控位置。"
-                + subtitleNotice : "导出文件包含转写、发言人和已生成成果，且为未加密明文。请只保存到你控制的位置。")
+                + subtitleNotice : "将“" + scope.label + "”导出为未加密明文。请只保存到你控制的位置。")
             .setNegativeButton("取消", null).setPositiveButton("选择保存位置", (d, w) -> {
                 String extension = format == 31 ? ".md" : format == 32 ? ".docx" : format == 33 ? ".pdf" : format == 34 ? ".srt" : ".vtt";
                 String mime = format == 31 ? "text/markdown" : format == 32 ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     : format == 33 ? "application/pdf" : "text/plain";
+                int request = subtitle ? format : format + scope.ordinal() * 10;
                 startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                    .setType(mime).putExtra(Intent.EXTRA_TITLE, "录音文字-" + session.substring(0, 8) + extension), format);
+                    .setType(mime).putExtra(Intent.EXTRA_TITLE, "Record-" + session.substring(0, 8) + "-" + scope.filename + extension), request);
             }).show();
     }
     private void share() {
         if (!editable() || document == null) return;
+        chooseScope(this::share);
+    }
+    private void share(TextExporter.Scope scope) {
         new AlertDialog.Builder(this).setTitle("分享明文文字？")
-            .setMessage("将转写、发言人、时间戳和已有成果发送到你选择的应用。Notion、飞书或其他接收应用可能将内容上传到各自云端。")
+            .setMessage("将“" + scope.label + "”发送到你选择的应用。Notion、飞书或其他接收应用可能将内容上传到各自云端。")
             .setNegativeButton("取消", null).setPositiveButton("选择应用", (d, w) -> io.execute(() -> {
                 try {
-                    JSONObject doc = TextStore.read(this, session); String contents = TextExporter.markdown(doc);
+                    JSONObject doc = TextStore.read(this, session); String contents = TextExporter.markdown(doc, scope);
                     if (contents.length() > 100000) { handler.post(() -> toast("内容较长，请先导出文件再导入目标应用")); return; }
                     handler.post(() -> {
                         if (isDestroyed()) return;
                         Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                            .putExtra(Intent.EXTRA_SUBJECT, "录音文字-" + session.substring(0, 8))
+                            .putExtra(Intent.EXTRA_SUBJECT, scope.label + "-" + session.substring(0, 8))
                             .putExtra(Intent.EXTRA_TEXT, contents);
-                        startActivity(Intent.createChooser(send, "分享录音文字"));
+                        startActivity(Intent.createChooser(send, "分享" + scope.label));
                     });
                 } catch (Exception e) { handler.post(() -> toast("无法读取加密文字记录")); }
             })).show();
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
-        super.onActivityResult(request, result, data); if ((request < 31 || request > 35) || result != RESULT_OK || data == null || data.getData() == null) return;
+        super.onActivityResult(request, result, data);
+        int format = 31 + (request - 31) % 10, scopeIndex = (request - 31) / 10;
+        if (request < 31 || scopeIndex >= TextExporter.Scope.values().length || format > 35
+            || (scopeIndex > 0 && format > 33) || result != RESULT_OK || data == null || data.getData() == null) return;
+        TextExporter.Scope scope = TextExporter.Scope.values()[scopeIndex];
         io.execute(() -> {
             byte[] text = null;
             try {
                 JSONObject doc = TextStore.read(this, session); if (doc == null) throw new java.io.IOException();
                 try (OutputStream out = getContentResolver().openOutputStream(data.getData(), "wt")) {
                     if (out == null) throw new java.io.IOException();
-                    if (request == 31) { text = TextExporter.markdown(doc).getBytes(StandardCharsets.UTF_8); out.write(text); }
-                    else if (request == 32) TextExporter.writeDocx(doc, out);
-                    else if (request == 33) TextExporter.writePdf(this, doc, out);
-                    else { text = TextExporter.subtitles(doc, request == 35).getBytes(StandardCharsets.UTF_8); out.write(text); }
+                    if (format == 31) { text = TextExporter.markdown(doc, scope).getBytes(StandardCharsets.UTF_8); out.write(text); }
+                    else if (format == 32) TextExporter.writeDocx(doc, scope, out);
+                    else if (format == 33) TextExporter.writePdf(this, doc, scope, out);
+                    else { text = TextExporter.subtitles(doc, format == 35).getBytes(StandardCharsets.UTF_8); out.write(text); }
                     out.flush();
                 }
                 handler.post(() -> toast("文字与成果已导出"));

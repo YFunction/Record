@@ -9,6 +9,9 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.os.Looper;
+import android.text.Spanned;
+import android.text.style.StyleSpan;
+import android.text.style.RelativeSizeSpan;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -37,6 +40,18 @@ import static org.robolectric.Shadows.shadowOf;
 @Config(sdk = 36, qualifiers = "w393dp-h852dp-xxhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class UiTest {
+    @Test public void generatedMarkdownRendersAsStyledLocalText() {
+        try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).setup()) {
+            Ui ui = new Ui(controller.get());
+            Spanned text = (Spanned) MarkdownRenderer.render("## 摘要\n**决定**按期交付\n- 负责人：小王\n| 项目 | 时间 |\n|---|---|\n| 交付 | 周五 |\n`核对`", ui);
+            String visible = text.toString();
+            assertTrue(visible.contains("摘要")); assertTrue(visible.contains("• 负责人：小王"));
+            assertTrue(visible.contains("项目：交付")); assertTrue(visible.contains("时间：周五"));
+            assertFalse(visible.contains("**")); assertFalse(visible.contains("|---|"));
+            assertTrue(text.getSpans(0, text.length(), StyleSpan.class).length > 0);
+            assertTrue(text.getSpans(0, text.length(), RelativeSizeSpan.class).length > 0);
+        }
+    }
     @Before public void initializeWorkManager() {
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(RuntimeEnvironment.getApplication(),
             new androidx.work.Configuration.Builder().setExecutor(new androidx.work.testing.SynchronousExecutor()).build());

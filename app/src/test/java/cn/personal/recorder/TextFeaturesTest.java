@@ -62,6 +62,36 @@ public class TextFeaturesTest {
         assertTrue(markdown.contains("00:00:03")); assertTrue(markdown.contains("小王")); assertTrue(markdown.contains("待办"));
         assertTrue(markdown.contains("## 大纲")); assertTrue(markdown.contains("- 会议"));
     }
+    @Test public void selectedResultsExportWithoutOtherPrivateContent() throws Exception {
+        JSONObject doc = Transcript.create("record-id", true);
+        doc.getJSONArray("segments").put(new JSONObject().put("start", 1).put("end", 2)
+            .put("speaker", 0).put("text", "私密转写"));
+        doc.put("summary", "## 主题\n项目讨论\n\n**摘要：** 这是摘要。\n第二句。\n\n## 待办事项\n- 周五完成")
+            .put("outline", "## 第一章\n- 大纲内容")
+            .put("mindMap", "{\"name\":\"节点\",\"children\":[]}");
+        assertEquals("这是摘要。\n第二句。", TextExporter.abstractMarkdown(doc));
+        String abstractOnly = TextExporter.markdown(doc, TextExporter.Scope.ABSTRACT);
+        assertTrue(abstractOnly.contains("这是摘要"));
+        assertFalse(abstractOnly.contains("私密转写")); assertFalse(abstractOnly.contains("待办事项"));
+        assertFalse(abstractOnly.contains("大纲内容"));
+        String outlineOnly = TextExporter.markdown(doc, TextExporter.Scope.OUTLINE);
+        assertTrue(outlineOnly.contains("大纲内容")); assertFalse(outlineOnly.contains("私密转写"));
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        TextExporter.writeDocx(doc, TextExporter.Scope.SUMMARY, bytes);
+        String xml = "";
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes.toByteArray()), StandardCharsets.UTF_8)) {
+            ZipEntry entry; while ((entry = zip.getNextEntry()) != null)
+                if ("word/document.xml".equals(entry.getName())) xml = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        assertTrue(xml.contains("这是摘要")); assertFalse(xml.contains("私密转写"));
+        assertFalse(xml.contains("大纲内容")); assertFalse(xml.contains("**摘要"));
+    }
+    @Test public void absentAbstractIsNotOfferedAsExport() throws Exception {
+        JSONObject doc = Transcript.create("id", true).put("summary", "## 结论\n先试用");
+        assertFalse(TextExporter.available(doc, TextExporter.Scope.ABSTRACT));
+        try { TextExporter.markdown(doc, TextExporter.Scope.ABSTRACT); fail(); }
+        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("摘要")); }
+    }
     @Test public void subtitlesPreserveSegmentBoundariesAndSpeakerLabels() throws Exception {
         JSONObject doc = Transcript.create("record-id", true); doc.getJSONObject("names").put("0", "小王");
         doc.getJSONArray("segments")
