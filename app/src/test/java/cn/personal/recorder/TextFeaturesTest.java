@@ -122,12 +122,19 @@ public class TextFeaturesTest {
         assertEquals("## 摘要\n会议决定下周复核", DeepSeekClient.parseCompletion(complete));
         byte[] truncated = "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"不完整内容\"}}]}".getBytes(StandardCharsets.UTF_8);
         try { DeepSeekClient.parseCompletion(truncated); fail("truncated output must not replace an old summary"); }
-        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("未完整生成")); }
+        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("长度上限")); }
+        byte[] filtered = "{\"choices\":[{\"finish_reason\":\"content_filter\",\"message\":{\"content\":\"\"}}]}".getBytes(StandardCharsets.UTF_8);
+        try { DeepSeekClient.parseCompletion(filtered); fail("filtered output must not be saved"); }
+        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("内容过滤")); }
+        byte[] empty = "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":null}}]}".getBytes(StandardCharsets.UTF_8);
+        try { DeepSeekClient.parseCompletion(empty); fail("null output must not be saved"); }
+        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("空结果")); }
     }
     @Test public void longSummaryUsesEveryPartThenMerges() throws Exception {
         String text = "开始\n" + "内容\n".repeat(15000) + "最后的决定"; List<String> inputs = new ArrayList<>();
         String summary = DeepSeekClient.summarize(text, "synthetic-key-for-test", () -> false, s -> {}, (body, credential, cancelled) -> {
             assertEquals("deepseek-flash", body.getString("model")); assertEquals("disabled", body.getJSONObject("thinking").getString("type"));
+            assertEquals(16384, body.getInt("max_tokens"));
             JSONArray messages = body.getJSONArray("messages"); assertTrue(messages.getJSONObject(1).get("content") instanceof String);
             assertFalse(body.toString().contains("input_audio")); assertFalse(body.toString().contains("file_data")); assertFalse(body.toString().contains(credential));
             String input = messages.getJSONObject(1).getString("content"); inputs.add(input); return "纪要 " + inputs.size();
