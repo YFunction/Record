@@ -251,6 +251,21 @@ public class UiTest {
             assertEquals("普通打开录音详情时应停留在上方成果区", 0, scroll.getScrollY());
             expand.performClick(); assertNotNull(find(activity, "收起转写"));
             TextView button = find(activity, "生成 AI 总结"); assertNotNull(button); assertTrue(button.isEnabled());
+            AnalysisService.session = session; AnalysisService.operation = AnalysisService.SUMMARY;
+            AnalysisService.state = "DeepSeek 请求失败（HTTP 400）";
+            try {
+                update.invoke(activity);
+                java.lang.reflect.Field hint = TextActivity.class.getDeclaredField("aiHint"); hint.setAccessible(true);
+                assertEquals("AI 卡片应直接显示失败原因", "DeepSeek 请求失败（HTTP 400）",
+                    ((TextView) hint.get(activity)).getText().toString());
+                AnalysisService.operation = AnalysisService.OUTLINE;
+                AnalysisService.state = "大纲完成，已加密保存";
+                update.invoke(activity);
+                java.lang.reflect.Field outlineHint = TextActivity.class.getDeclaredField("outlineHint"); outlineHint.setAccessible(true);
+                assertEquals("大纲完成，已加密保存", ((TextView) outlineHint.get(activity)).getText().toString());
+            } finally {
+                AnalysisService.session = ""; AnalysisService.operation = ""; AnalysisService.state = "";
+            }
             button.performClick();
             AlertDialog dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog(); assertNotNull(dialog);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();

@@ -19,7 +19,7 @@ import org.json.JSONObject;
 public final class AnalysisService extends Service {
     static final String TRANSCRIBE = "transcribe", SUMMARY = "summary", OUTLINE = "outline", MINDMAP = "mindmap", MODELS = "models", IMPORT = "import", CANCEL = "cancel";
     static volatile boolean busy, transcribing;
-    static volatile String state = "", session = "";
+    static volatile String state = "", session = "", operation = "";
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final Handler main = new Handler(Looper.getMainLooper());
     private PowerManager.WakeLock wake;
@@ -34,7 +34,7 @@ public final class AnalysisService extends Service {
         if (LiveTranscriber.isBusyFor(recording)) { state = "实时文字仍在保存，请稍后重试"; stopSelf(); return START_NOT_STICKY; }
         if ((MODELS.equals(action) || IMPORT.equals(action)) && RecordingService.active) { state = "请先停止录音再更新离线模型"; stopSelf(); return START_NOT_STICKY; }
         if (TRANSCRIBE.equals(action) && RecordingService.active) { state = "请先停止录音再提取文字"; stopSelf(); return START_NOT_STICKY; }
-        busy = true; transcribing = TRANSCRIBE.equals(action); session = recording == null ? "" : recording; cancelled.set(false);
+        busy = true; transcribing = TRANSCRIBE.equals(action); session = recording == null ? "" : recording; operation = action; cancelled.set(false);
         try {
             getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("text-processing", "录音文字处理", NotificationManager.IMPORTANCE_LOW));
             state = TRANSCRIBE.equals(action) ? "准备本地提取文字" : MODELS.equals(action) || IMPORT.equals(action) ? "准备离线模型" : "准备" + resultName(action);
@@ -52,7 +52,8 @@ public final class AnalysisService extends Service {
                     JSONObject doc = LocalTranscriber.transcribe(this, entry, intent.getIntExtra("speaker-count", -1), cancelled::get, this::progress); LocalTranscriber.check(cancelled::get); TextStore.save(this, doc);
                 } else {
                     if (!CategoryStore.aiAllowed(this, recording)) throw new java.io.IOException("本分类未允许外部 AI 读取文字，请在分类管理中明确开启");
-                    JSONObject doc = TextStore.read(this, recording); if (doc == null) throw new java.io.IOException("请先提取录音文字");
+                    JSONObject doc = TextStore.read(this, recording);
+                    if (!Transcript.hasContent(doc)) throw new java.io.IOException("请先提取有效的录音文字");
                     String text = (doc.getBoolean("complete") ? "完整录音\n" : "部分录音：未正常结束，仅包含已保存片段\n") + Transcript.text(doc);
                     String result = DeepSeekClient.generate(text, new Vault(this).aiKey(), cancelled::get, this::progress, CategoryStore.template(this, recording), action); LocalTranscriber.check(cancelled::get);
                     String field = resultField(action);

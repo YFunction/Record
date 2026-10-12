@@ -131,12 +131,16 @@ final class DeepSeekClient {
                 while ((n = in.read(block)) != -1) { LocalTranscriber.check(cancelled); if (body.size() + n > 256 * 1024) throw new java.io.IOException("AI 响应过大"); body.write(block, 0, n); }
                 response = body.toByteArray();
             }
-            try {
-                JSONObject choice = new JSONObject(new String(response, StandardCharsets.UTF_8)).getJSONArray("choices").getJSONObject(0);
-                if (!"stop".equals(choice.getString("finish_reason"))) throw new java.io.IOException("AI 总结未完整生成，未覆盖已有结果，请重试");
-                String content = choice.getJSONObject("message").getString("content").trim();
-                if (content.isEmpty()) throw new java.io.IOException("AI 返回了空结果"); return content;
-            } finally { Arrays.fill(response, (byte) 0); }
+            try { return parseCompletion(response); }
+            finally { Arrays.fill(response, (byte) 0); }
         } finally { Arrays.fill(payload, (byte) 0); conn.disconnect(); }
+    }
+    static String parseCompletion(byte[] response) throws Exception {
+        JSONObject choice = new JSONObject(new String(response, StandardCharsets.UTF_8)).getJSONArray("choices").getJSONObject(0);
+        if (!"stop".equals(choice.optString("finish_reason")))
+            throw new java.io.IOException("AI 结果未完整生成，旧结果已保留；请重试");
+        String content = choice.getJSONObject("message").optString("content").trim();
+        if (content.isEmpty()) throw new java.io.IOException("AI 返回了空结果");
+        return content;
     }
 }

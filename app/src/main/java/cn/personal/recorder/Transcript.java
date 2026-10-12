@@ -37,6 +37,15 @@ final class Transcript {
         }
         return out.toString();
     }
+    static boolean hasContent(JSONObject doc) {
+        JSONArray segments = doc == null ? null : doc.optJSONArray("segments");
+        if (segments == null) return false;
+        for (int i = 0; i < segments.length(); i++) {
+            JSONObject segment = segments.optJSONObject(i);
+            if (segment != null && !segment.optString("text").trim().isEmpty()) return true;
+        }
+        return false;
+    }
     static List<String> parts(String text, int limit) {
         if (limit < 2) throw new IllegalArgumentException("文本分段长度过小");
         List<String> parts = new ArrayList<>();

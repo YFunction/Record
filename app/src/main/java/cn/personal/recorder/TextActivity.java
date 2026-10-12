@@ -36,7 +36,7 @@ public final class TextActivity extends Activity {
     private Ui ui;
     private String session, revision = "";
     private JSONObject document;
-    private TextView status, missingNotice, transcript, transcriptHint, summary, outline, playbackStatus, aiHint;
+    private TextView status, missingNotice, transcript, transcriptHint, summary, outline, playbackStatus, aiHint, outlineHint, mindMapHint;
     private LinearLayout mindMap;
     private Button extract, summarize, makeOutline, makeMindMap, transcriptToggle;
     private boolean loading, changing;
@@ -79,9 +79,11 @@ public final class TextActivity extends Activity {
         summary = ui.label("尚未生成总结；完成后会显示在这里", 15, ui.ink); summary.setTextIsSelectable(true); notes.addView(summary);
         LinearLayout outlineCard = ui.card(root); outlineCard.addView(ui.title("大纲", 18));
         makeOutline = ui.button("生成大纲", () -> generate("outline"), false); outlineCard.addView(makeOutline, ui.spaced());
+        outlineHint = ui.label("", 12, ui.muted); outlineCard.addView(outlineHint);
         outline = ui.label("尚未生成大纲", 15, ui.ink); outline.setTextIsSelectable(true); outlineCard.addView(outline);
         LinearLayout mapCard = ui.card(root); mapCard.addView(ui.title("思维导图", 18));
         makeMindMap = ui.button("生成思维导图", () -> generate("mindmap"), false); mapCard.addView(makeMindMap, ui.spaced());
+        mindMapHint = ui.label("", 12, ui.muted); mapCard.addView(mindMapHint);
         mindMap = ui.column(0); mapCard.addView(mindMap);
         LinearLayout result = ui.card(root); result.addView(ui.title("录音文字", 18));
         result.addView(ui.label("发言人编号为估计结果，重叠说话与噪声可能造成误分，请核对。", 12, ui.muted));
@@ -110,13 +112,19 @@ public final class TextActivity extends Activity {
     private void update() {
         boolean liveBusy = LiveTranscriber.isBusyFor(session);
         boolean busy = AnalysisService.busy || liveBusy || changing || loading; boolean aiAllowed = categoryAiAllowed;
-        boolean canGenerate = !busy && document != null;
+        boolean hasTranscript = Transcript.hasContent(document);
+        boolean canGenerate = !busy && hasTranscript;
         extract.setEnabled(!busy && !RecordingService.active); summarize.setEnabled(canGenerate); makeOutline.setEnabled(canGenerate); makeMindMap.setEnabled(canGenerate);
         extract.setAlpha(extract.isEnabled() ? 1f : 0.45f); summarize.setAlpha(summarize.isEnabled() ? 1f : 0.45f);
         makeOutline.setAlpha(makeOutline.isEnabled() ? 1f : 0.45f); makeMindMap.setAlpha(makeMindMap.isEnabled() ? 1f : 0.45f);
-        aiHint.setText(document == null ? "先提取录音文字" : !aiAllowed
+        String summaryState = analysisState(AnalysisService.SUMMARY);
+        aiHint.setText(summaryState != null ? summaryState
+            : !hasTranscript ? "先提取有效的录音文字" : !aiAllowed
             ? "当前分类尚未允许外部 AI。点击生成后可前往分类权限设置；文字不会自动发送。"
             : !new Vault(this).aiConfigured() ? "尚未设置 DeepSeek Key。点击生成后可前往设置。" : "点击生成后仍需确认发送文字。");
+        String outlineState = analysisState(AnalysisService.OUTLINE), mindMapState = analysisState(AnalysisService.MINDMAP);
+        outlineHint.setText(outlineState == null ? "" : outlineState);
+        mindMapHint.setText(mindMapState == null ? "" : mindMapState);
         if (liveBusy) status.setText("正在加密保存实时文字，请稍后再进行完整转写或总结");
         else if (AnalysisService.busy) status.setText(AnalysisService.session.isEmpty() || session.equals(AnalysisService.session) ? AnalysisService.state : "正在处理另一场录音");
         else status.setText(!aiAllowed ? "本分类禁止向外部 AI 发送文字 · 可在设置 → 分类管理中更改" : (!AnalysisService.state.isEmpty() && (session.equals(AnalysisService.session) || AnalysisService.session.isEmpty()) ? AnalysisService.state : "文字与总结在手机加密保存，按云端设置同步"));
@@ -131,6 +139,10 @@ public final class TextActivity extends Activity {
     }
     private void refreshCategoryPolicy() {
         categoryName = CategoryStore.name(this, CategoryStore.categoryFor(this, session)); categoryAiAllowed = CategoryStore.aiAllowed(this, session);
+    }
+    private String analysisState(String action) {
+        return session.equals(AnalysisService.session) && action.equals(AnalysisService.operation)
+            && !AnalysisService.state.isEmpty() ? AnalysisService.state : null;
     }
     private void display() {
         try {
@@ -250,7 +262,8 @@ public final class TextActivity extends Activity {
         })); dialog.show();
     }
     private void generate(String kind) {
-        if (!editable() || document == null) return;
+        if (!editable()) return;
+        if (!Transcript.hasContent(document)) { toast("请先提取有效的录音文字"); return; }
         if (!CategoryStore.aiAllowed(this, session)) {
             new AlertDialog.Builder(this).setTitle("先开启分类 AI 权限")
                 .setMessage("“" + CategoryStore.aiPolicy(this, session) + "”分类目前禁止向外部 AI 发送文字。开启权限后仍需逐次确认生成；此操作不会发送当前文字。")

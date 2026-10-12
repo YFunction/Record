@@ -109,6 +109,21 @@ public class TextFeaturesTest {
         String text = ("中文🙂文字\n").repeat(7000); List<String> parts = Transcript.parts(text, 20000);
         assertEquals(text, String.join("", parts)); for (String p : parts) assertFalse(Character.isHighSurrogate(p.charAt(p.length() - 1)));
     }
+    @Test public void emptyTranscriptCannotBeSentForAiGeneration() throws Exception {
+        JSONObject doc = Transcript.create("10000000-0000-4000-8000-000000000001", true);
+        assertFalse(Transcript.hasContent(doc));
+        doc.getJSONArray("segments").put(new JSONObject().put("text", "  \n "));
+        assertFalse(Transcript.hasContent(doc));
+        doc.getJSONArray("segments").put(new JSONObject().put("text", "会议决定下周复核"));
+        assertTrue(Transcript.hasContent(doc));
+    }
+    @Test public void officialChatResponseIsParsedAndIncompleteResultsAreRejected() throws Exception {
+        byte[] complete = "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"## 摘要\\n会议决定下周复核\"}}]}".getBytes(StandardCharsets.UTF_8);
+        assertEquals("## 摘要\n会议决定下周复核", DeepSeekClient.parseCompletion(complete));
+        byte[] truncated = "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"不完整内容\"}}]}".getBytes(StandardCharsets.UTF_8);
+        try { DeepSeekClient.parseCompletion(truncated); fail("truncated output must not replace an old summary"); }
+        catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("未完整生成")); }
+    }
     @Test public void longSummaryUsesEveryPartThenMerges() throws Exception {
         String text = "开始\n" + "内容\n".repeat(15000) + "最后的决定"; List<String> inputs = new ArrayList<>();
         String summary = DeepSeekClient.summarize(text, "synthetic-key-for-test", () -> false, s -> {}, (body, credential, cancelled) -> {
