@@ -306,6 +306,21 @@ public final class MainActivity extends Activity {
             try {
                 CategoryStore.State catalog = CategoryStore.load(this);
                 List<RecordingLibrary.Entry> entries = RecordingLibrary.list(this, catalog);
+                java.util.Map<String, Long> recovered = new java.util.HashMap<>();
+                int scanned = 0;
+                for (RecordingLibrary.Entry entry : entries) {
+                    if (!requestedFilter.isEmpty() && !requestedFilter.equals(entry.categoryId)) continue;
+                    if (scanned++ >= 20) break;
+                    if (entry.durationMs > 0 || entry.chunks.length == 0) continue;
+                    try (RecordingSource source = new RecordingSource(entry.chunks, vault.recordingKey())) {
+                        recovered.put(entry.id, source.samples * 1000L / 16000L);
+                    } catch (Exception ignored) { /* Damaged recordings remain visible with unknown duration. */ }
+                }
+                if (!recovered.isEmpty()) {
+                    CategoryStore.setDurations(this, recovered);
+                    catalog = CategoryStore.load(this);
+                    entries = RecordingLibrary.list(this, catalog);
+                }
                 String effectiveFilter = requestedFilter;
                 if (!requestedFilter.isEmpty()) {
                     boolean exists = false; for (int i = 0; i < catalog.size(); i++) if (requestedFilter.equals(catalog.id(catalog.category(i)))) exists = true;
@@ -314,6 +329,8 @@ public final class MainActivity extends Activity {
                 StringBuilder signature = new StringBuilder().append(catalog.updatedAt).append(':').append(effectiveFilter).append(';');
                 for (RecordingLibrary.Entry e : entries) signature.append(e.id).append(':').append(e.time).append(':').append(e.bytes).append(':').append(e.uploaded).append(':').append(e.categoryId).append(';');
                 final String selectedFilter = effectiveFilter;
+                final CategoryStore.State displayCatalog = catalog;
+                final List<RecordingLibrary.Entry> displayEntries = entries;
                 handler.post(() -> {
                     libraryBusy = false; if (isDestroyed()) return;
                     if (!requestedFilter.equals(libraryFilter)) { loadLibrary(); return; }
@@ -321,7 +338,7 @@ public final class MainActivity extends Activity {
                     libraryFilter = selectedFilter;
                     if (!signature.toString().equals(librarySignature)) {
                         librarySignature = signature.toString();
-                        renderCategories(catalog, entries); updateLibraryHeading(catalog); renderLibrary(entries);
+                        renderCategories(displayCatalog, displayEntries); updateLibraryHeading(displayCatalog); renderLibrary(displayEntries);
                     }
                 });
             } catch (Exception e) { handler.post(() -> { libraryBusy = false; toast("无法读取本地录音"); }); }
@@ -338,9 +355,13 @@ public final class MainActivity extends Activity {
             if (shown++ >= 20) break;
             LinearLayout item = card(library); item.setPadding(dp(16), dp(12), dp(16), dp(12));
             LinearLayout top = row();
-            TextView date = label(dateFormat.format(new java.util.Date(entry.time)), 16, INK);
-            date.setTypeface(null, Typeface.BOLD); top.addView(date, new LinearLayout.LayoutParams(0, -2, 1));
+            String fallback = dateFormat.format(new java.util.Date(entry.time));
+            TextView title = label(entry.title.isEmpty() ? fallback : entry.title, 16, INK);
+            title.setSingleLine(true); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            title.setTypeface(null, Typeface.BOLD); top.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
             top.addView(label("›", 24, MUTED)); item.addView(top);
+            String length = entry.durationMs > 0 ? "时长 " + duration((entry.durationMs + 500) / 1000) : "时长未知";
+            item.addView(label((entry.title.isEmpty() ? "" : fallback + " · ") + length, 12, MUTED));
             LinearLayout detail = row();
             TextView category = label(entry.categoryName, 12, TEAL);
             category.setSingleLine(true); category.setMaxWidth(dp(116)); category.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -350,10 +371,15 @@ public final class MainActivity extends Activity {
             TextView info = label(entry.chunks.length == 0 ? "加密文字" : String.format(Locale.CHINA, "%s · %.1f MB", saved, entry.bytes / 1048576.0), 12, MUTED);
             info.setSingleLine(true); info.setEllipsize(android.text.TextUtils.TruncateAt.END); info.setPadding(dp(10), 0, 0, 0);
             detail.addView(info, new LinearLayout.LayoutParams(0, -2, 1)); item.addView(detail);
-            item.setContentDescription("录音 " + new java.util.Date(entry.time) + "，点击查看文字、播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
+            item.setContentDescription("录音 " + (entry.title.isEmpty() ? fallback : entry.title) + "，" + length + "，点击查看文字、播放或导出"); item.setOnClickListener(v -> unlocked(() -> recordingActions(entry)));
         }
         if (visible.size() > 20) library.addView(button("查看更早录音（共 " + visible.size() + " 场）", () -> unlocked(() -> {
-            String[] names = new String[visible.size()]; for (int i = 0; i < names.length; i++) names[i] = visible.get(i).categoryName + " · " + new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new java.util.Date(visible.get(i).time));
+            String[] names = new String[visible.size()]; for (int i = 0; i < names.length; i++) {
+                RecordingLibrary.Entry entry = visible.get(i);
+                names[i] = (entry.title.isEmpty() ? entry.categoryName : entry.title) + " · "
+                    + new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new java.util.Date(entry.time))
+                    + (entry.durationMs > 0 ? " · " + duration((entry.durationMs + 500) / 1000) : "");
+            }
             showPrivate(new AlertDialog.Builder(this).setTitle("全部本地录音").setItems(names, (d, w) -> recordingActions(visible.get(w))).setNegativeButton("关闭", null));
         }), false));
     }
@@ -389,7 +415,9 @@ public final class MainActivity extends Activity {
         if (!editable()) return;
         String date = new SimpleDateFormat("yyyy年MM月dd日  HH:mm", Locale.CHINA).format(new java.util.Date(entry.time));
         final AlertDialog[] sheet = new AlertDialog[1];
-        sheet[0] = ui.bottomSheet("录音详情", entry.categoryName + "  ·  " + date, (widgets, actions) -> {
+        sheet[0] = ui.bottomSheet(entry.title.isEmpty() ? "录音详情" : entry.title,
+            entry.categoryName + "  ·  " + date + (entry.durationMs > 0 ? "  ·  " + duration((entry.durationMs + 500) / 1000) : ""), (widgets, actions) -> {
+            widgets.action(actions, "修改录音名称", "为这场录音设置易查找的名称", () -> { sheet[0].dismiss(); renameRecording(entry); });
             widgets.action(actions, "瞬间标记", "查看标记并从对应时间回听", () -> { sheet[0].dismiss(); showMoments(entry); });
             widgets.action(actions, "查看文字与成果", "转写、AI 总结、大纲和思维导图", () -> { sheet[0].dismiss(); releasePlayer(); startActivity(new Intent(this, TextActivity.class).putExtra("session", entry.id)); });
             widgets.action(actions, "更改所属分类", "将这场录音移入其他内容分类", () -> { sheet[0].dismiss(); changeCategory(entry); });
@@ -411,13 +439,29 @@ public final class MainActivity extends Activity {
                         if (AnalysisService.busy || LiveTranscriber.isBusyFor(entry.id)) { toast("请等待文字处理结束后再删除"); return; }
                         io.execute(() -> {
                             boolean ok = RecordingLibrary.delete(entry); ok = TextStore.delete(this, entry.id) && ok;
-                            ok = MomentStore.delete(this, entry.id) && ok; boolean result = ok;
+                            ok = MomentStore.delete(this, entry.id) && ok;
+                            if (ok) try { CategoryStore.forgetRecording(this, entry.id); } catch (Exception e) { ok = false; }
+                            boolean result = ok;
                             handler.post(() -> { librarySignature = ""; loadLibrary(); toast(result ? "本地录音与文字已删除" : "部分文件删除失败，请重试"); });
                         });
                     }));
             });
         });
         showPrivate(sheet[0]);
+    }
+    private void renameRecording(RecordingLibrary.Entry entry) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true); input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(60)});
+        input.setText(entry.title); input.setSelection(input.length()); input.setHint("录音名称，留空可恢复默认显示");
+        showPrivate(new AlertDialog.Builder(this).setTitle("修改录音名称").setView(input)
+            .setNegativeButton("取消", null).setPositiveButton("保存", (dialog, which) -> {
+                String name = input.getText().toString();
+                io.execute(() -> {
+                    try { CategoryStore.renameRecording(this, entry.id, name);
+                        handler.post(() -> { librarySignature = ""; loadLibrary(); toast("录音名称已保存"); }); }
+                    catch (Exception e) { handler.post(() -> toast("名称保存失败：" + e.getMessage())); }
+                });
+            }));
     }
     private void showMoments(RecordingLibrary.Entry entry) {
         io.execute(() -> {

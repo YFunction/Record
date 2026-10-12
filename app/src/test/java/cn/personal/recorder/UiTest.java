@@ -105,6 +105,20 @@ public class UiTest {
             render(activity, "light-home");
         }
     }
+    @Test public void recentRecordingShowsCustomTitleAndThreeHourDuration() throws Exception {
+        try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
+            MainActivity activity = controller.get();
+            RecordingLibrary.Entry entry = new RecordingLibrary.Entry("10000000-0000-4000-8000-000000000001",
+                "category", "会议记录", java.util.Collections.emptyList(), System.currentTimeMillis(),
+                "项目周会", 3 * 3600_000L + 12_000L);
+            java.lang.reflect.Method render = MainActivity.class.getDeclaredMethod("renderLibrary", List.class);
+            render.setAccessible(true); render.invoke(activity, java.util.Collections.singletonList(entry));
+            assertNotNull(find(activity, "项目周会"));
+            assertTrue(texts(activity.findViewById(android.R.id.content)).stream()
+                .anyMatch(value -> value.getText().toString().contains("时长 03:00:12")));
+            render(activity, "title-duration-home");
+        }
+    }
     @Test public void homeSearchOpensAnUnlockedLocalSearchPage() throws Exception {
         try (ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class).setup()) {
             MainActivity activity = controller.get(); controller.visible().windowFocusChanged(true);

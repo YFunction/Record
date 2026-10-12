@@ -29,10 +29,17 @@ final class CategoryStore {
     static final class State {
         final JSONArray categories;
         final JSONObject assignments;
+        final JSONObject recordingNames;
+        final JSONObject recordingDurations;
         String defaultId;
         long updatedAt;
         State(JSONArray categories, JSONObject assignments, String defaultId, long updatedAt) {
+            this(categories, assignments, new JSONObject(), new JSONObject(), defaultId, updatedAt);
+        }
+        State(JSONArray categories, JSONObject assignments, JSONObject recordingNames,
+              JSONObject recordingDurations, String defaultId, long updatedAt) {
             this.categories = categories; this.assignments = assignments; this.defaultId = defaultId; this.updatedAt = updatedAt;
+            this.recordingNames = recordingNames; this.recordingDurations = recordingDurations;
         }
         int size() { return categories.length(); }
         JSONObject category(int index) { return categories.optJSONObject(index); }
@@ -42,6 +49,8 @@ final class CategoryStore {
             String id = assignments.optString(session, UNCATEGORIZED);
             return find(this, id) == null ? UNCATEGORIZED : id;
         }
+        String recordingName(String session) { return recordingNames.optString(session, ""); }
+        long durationMs(String session) { return Math.max(0, recordingDurations.optLong(session, 0)); }
     }
 
     static synchronized State load(Context context) throws Exception {
@@ -55,7 +64,9 @@ final class CategoryStore {
             String defaultId = json.optString("defaultCategory", "");
             if (categories == null || categories.length() < 1 || categories.length() > 200 || assignments == null || find(categories, defaultId) == null)
                 throw new IOException("分类目录数据无效");
-            State state = new State(categories, assignments, defaultId, json.optLong("updatedAt"));
+            JSONObject names = json.optJSONObject("recordingNames"), durations = json.optJSONObject("recordingDurations");
+            State state = new State(categories, assignments, names == null ? new JSONObject() : names,
+                durations == null ? new JSONObject() : durations, defaultId, json.optLong("updatedAt"));
             return state;
         } finally { Arrays.fill(envelope, (byte) 0); }
     }
@@ -87,6 +98,42 @@ final class CategoryStore {
         State state = load(context);
         if (!TextStore.validSession(session) || find(state, categoryId) == null) throw new IllegalArgumentException("录音或分类无效");
         state.assignments.put(session, categoryId); save(context, state);
+    }
+    static synchronized void renameRecording(Context context, String session, String name) throws Exception {
+        if (!TextStore.validSession(session)) throw new IllegalArgumentException("录音编号无效");
+        String clean = cleanRecordingName(name);
+        State state = load(context);
+        if (clean.isEmpty()) state.recordingNames.remove(session);
+        else state.recordingNames.put(session, clean);
+        save(context, state);
+    }
+    static String cleanRecordingName(String name) {
+        String clean = name == null ? "" : name.trim();
+        if (clean.length() > 60 || clean.indexOf('\n') >= 0 || clean.indexOf('\r') >= 0 ||
+            clean.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("名称最多 60 个字符，不能包含控制字符");
+        return clean;
+    }
+    static synchronized void setDuration(Context context, String session, long durationMs) throws Exception {
+        if (!TextStore.validSession(session) || durationMs < 0) throw new IllegalArgumentException("录音时长无效");
+        State state = load(context);
+        state.recordingDurations.put(session, durationMs);
+        save(context, state);
+    }
+    static synchronized void setDurations(Context context, java.util.Map<String, Long> durations) throws Exception {
+        if (durations.isEmpty()) return;
+        State state = load(context);
+        for (java.util.Map.Entry<String, Long> entry : durations.entrySet()) {
+            if (!TextStore.validSession(entry.getKey()) || entry.getValue() == null || entry.getValue() < 0)
+                throw new IllegalArgumentException("录音时长无效");
+            state.recordingDurations.put(entry.getKey(), entry.getValue());
+        }
+        save(context, state);
+    }
+    static synchronized void forgetRecording(Context context, String session) throws Exception {
+        if (!TextStore.validSession(session)) return;
+        State state = load(context);
+        state.assignments.remove(session); state.recordingNames.remove(session); state.recordingDurations.remove(session);
+        save(context, state);
     }
     static synchronized void setDefault(Context context, String categoryId) throws Exception {
         State state = load(context); if (find(state, categoryId) == null) throw new IllegalArgumentException("分类不存在");
@@ -122,7 +169,8 @@ final class CategoryStore {
         new Vault(context).initialize("");
         state.updatedAt = System.currentTimeMillis();
         JSONObject json = new JSONObject().put("version", 1).put("updatedAt", state.updatedAt)
-            .put("defaultCategory", state.defaultId).put("categories", state.categories).put("assignments", state.assignments);
+            .put("defaultCategory", state.defaultId).put("categories", state.categories).put("assignments", state.assignments)
+            .put("recordingNames", state.recordingNames).put("recordingDurations", state.recordingDurations);
         byte[] plain = json.toString().getBytes(StandardCharsets.UTF_8), envelope;
         try { envelope = encrypt(plain, new Vault(context).recordingKey()); } finally { Arrays.fill(plain, (byte) 0); }
         try {

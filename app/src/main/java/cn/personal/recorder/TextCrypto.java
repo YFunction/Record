@@ -10,9 +10,9 @@ import javax.crypto.spec.GCMParameterSpec;
 
 /** Authenticated text envelope, separate from the audio protocol and AAD domain. */
 final class TextCrypto {
-    static final int LIMIT = 1024 * 1024;
+    static final int LIMIT = 16 * 1024 * 1024;
     static byte[] encrypt(byte[] text, SecretKey key, String name) throws Exception {
-        if (text.length > LIMIT) throw new IOException("文字记录超过 1 MB，请拆分处理");
+        if (text.length > LIMIT) throw new IOException("文字记录超过 16 MB，已超出单场录音的本机保存上限");
         byte[] nonce = new byte[12]; new SecureRandom().nextBytes(nonce);
         Cipher c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));
         c.updateAAD(("text-v1:" + name).getBytes(StandardCharsets.UTF_8)); byte[] encrypted = c.doFinal(text);

@@ -14,10 +14,30 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 36)
 public class RecordingLibraryTest {
+    @Test public void recordingTitleAndDurationReachLibrary() throws Exception {
+        Context context = RuntimeEnvironment.getApplication(); String session = UUID.randomUUID().toString();
+        File dir = TextStore.directory(context);
+        File latest = new File(dir, session + "_" + UUID.randomUUID() + ".enc");
+        Files.write(latest.toPath(), new byte[]{1});
+        Files.write(new File(dir, session + ".latest").toPath(), latest.getName().getBytes(StandardCharsets.UTF_8));
+        String category = UUID.randomUUID().toString();
+        CategoryStore.State catalog = new CategoryStore.State(
+            new JSONArray().put(new JSONObject().put("id", category).put("name", "会议记录")),
+            new JSONObject().put(session, category), new JSONObject().put(session, "周会 3 小时"),
+            new JSONObject().put(session, 3 * 3600_000L + 12_000L), category, 1);
+        RecordingLibrary.Entry entry = RecordingLibrary.list(context, catalog).stream()
+            .filter(e -> e.id.equals(session)).findFirst().orElseThrow();
+        assertEquals("周会 3 小时", entry.title);
+        assertEquals(3 * 3600_000L + 12_000L, entry.durationMs);
+        assertEquals("周会", CategoryStore.cleanRecordingName(" 周会 "));
+        assertThrows(IllegalArgumentException.class, () -> CategoryStore.cleanRecordingName("x".repeat(61)));
+    }
     @Test public void multipleTextRevisionsAppearAsOneRecordingAtTheLatestTime() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         String session = UUID.randomUUID().toString();

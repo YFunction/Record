@@ -62,7 +62,11 @@ public final class TextActivity extends Activity {
         refreshCategoryPolicy();
         ui = new Ui(this); LinearLayout root = ui.screen(); pageScroll = (ScrollView) root.getParent();
         LinearLayout heading = ui.row(); heading.addView(ui.quietButton("返回", this::finish));
-        TextView title = ui.title("录音详情", 24); title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title); root.addView(heading);
+        String recordingName = "";
+        try { recordingName = CategoryStore.load(this).recordingName(session); } catch (Exception ignored) { }
+        TextView title = ui.title(recordingName.isEmpty() ? "录音详情" : recordingName, 24);
+        title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
+        title.setPadding(ui.dp(14), 0, 0, 0); heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(heading);
         root.addView(ui.label("分类：" + categoryName + " · 发言人识别在手机本地完成", 13, ui.muted));
         LinearLayout actions = ui.card(root); actions.addView(ui.title("录音文字", 18));
         status = ui.label("读取加密记录…", 13, ui.muted); actions.addView(status);

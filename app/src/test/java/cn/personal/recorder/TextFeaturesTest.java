@@ -164,13 +164,33 @@ public class TextFeaturesTest {
         String text = "开始\n" + "内容\n".repeat(15000) + "最后的决定"; List<String> inputs = new ArrayList<>();
         String summary = DeepSeekClient.summarize(text, "synthetic-key-for-test", () -> false, s -> {}, (body, credential, cancelled) -> {
             assertEquals("deepseek-flash", body.getString("model")); assertEquals("disabled", body.getJSONObject("thinking").getString("type"));
-            assertEquals(16384, body.getInt("max_tokens"));
+            assertTrue(body.getInt("max_tokens") <= 8192);
             JSONArray messages = body.getJSONArray("messages"); assertTrue(messages.getJSONObject(1).get("content") instanceof String);
             assertFalse(body.toString().contains("input_audio")); assertFalse(body.toString().contains("file_data")); assertFalse(body.toString().contains(credential));
-            String input = messages.getJSONObject(1).getString("content"); inputs.add(input); return "纪要 " + inputs.size();
+            String input = messages.getJSONObject(1).getString("content"); inputs.add(input);
+            return messages.getJSONObject(0).getString("content").contains("分段事实笔记") ? "纪要 " + inputs.size()
+                : "## 摘要\n会议决定下周复核";
         });
-        List<String> expected = Transcript.parts(text, 20000); assertEquals(expected, inputs.subList(0, expected.size()));
-        assertEquals(expected.size() + 1, inputs.size()); assertTrue(summary.contains("纪要"));
+        List<String> expected = Transcript.parts(text, 6000); assertEquals(expected, inputs.subList(0, expected.size()));
+        assertTrue(inputs.size() > expected.size()); assertTrue(summary.contains("摘要"));
+    }
+    @Test public void threeHourScaleTextRetriesLengthWithoutFixedInputCap() throws Exception {
+        String text = "[00:00:00] 发言人 1：记录事实。\n".repeat(14000);
+        assertTrue(text.length() > 300000);
+        int[] shortened = {0}, extracted = {0}, finalCalls = {0};
+        String result = DeepSeekClient.generate(text, "synthetic-key", () -> false, s -> {}, (body, key, cancelled) -> {
+            String input = body.getJSONArray("messages").getJSONObject(1).getString("content");
+            String instruction = body.getJSONArray("messages").getJSONObject(0).getString("content");
+            if (instruction.contains("这是长录音的一小段")) {
+                if (input.length() > 3500 && shortened[0]++ == 0)
+                    throw new DeepSeekClient.IncompleteGenerationException("length");
+                extracted[0]++; return "- [00:00:00] 记录事实，保留来源";
+            }
+            if (instruction.contains("这是几份分段事实笔记")) return "- [00:00:00] 合并后的事实";
+            finalCalls[0]++; return "## 摘要\n整场内容已整理";
+        }, "meeting", "summary");
+        assertTrue(shortened[0] > 0); assertTrue(extracted[0] > 50); assertEquals(1, finalCalls[0]);
+        assertTrue(result.contains("整场内容已整理"));
     }
     @Test public void cancelledSummaryNeverStartsNetwork() throws Exception {
         try { DeepSeekClient.summarize("文字", "synthetic-key", () -> true, s -> {}, (r, k, c) -> { fail(); return ""; }); fail(); }

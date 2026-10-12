@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from recover import DOCUMENT_NAME, download
 
-MAX_DOCUMENT = 1024 * 1024
+MAX_DOCUMENT = 16 * 1024 * 1024
 
 def decrypt_document(key: bytes, name: str, envelope: bytes):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM

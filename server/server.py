@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9]{8}\.enc\Z")
 DOCUMENT_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.enc\Z")
 MAX_CHUNK = 2 * 1024 * 1024
+MAX_DOCUMENT = 16 * 1024 * 1024 + 32
 MAX_CATALOG = 1024 * 1024
 
 
@@ -36,8 +37,9 @@ def sync_directory(path: Path) -> None:
 
 
 class Store:
-    def __init__(self, root: Path, capacity: int, name_pattern=NAME, magic=b"ER01"):
+    def __init__(self, root: Path, capacity: int, name_pattern=NAME, magic=b"ER01", max_size=MAX_CHUNK):
         self.name_pattern, self.magic = name_pattern, magic
+        self.max_size = max_size
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.blobs = self.root / "chunks"
@@ -54,7 +56,7 @@ class Store:
     def put(self, name: str, payload: bytes, claimed: str) -> tuple[int, dict]:
         if not self.name_pattern.fullmatch(name):
             raise StoreError(400, "invalid chunk name")
-        if not 32 <= len(payload) <= MAX_CHUNK or payload[:4] != self.magic:
+        if not 32 <= len(payload) <= self.max_size or payload[:4] != self.magic:
             raise StoreError(400, "invalid envelope")
         digest = hashlib.sha256(payload).hexdigest()
         if not hmac.compare_digest(digest, claimed):
@@ -154,7 +156,7 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, address, store: Store, token: str):
         self.store, self.token = store, token
-        self.documents = Store(store.root / "texts", int(os.environ.get("RECORDER_TEXT_QUOTA_BYTES", str(256 * 1024**2))), DOCUMENT_NAME, b"ET01")
+        self.documents = Store(store.root / "texts", int(os.environ.get("RECORDER_TEXT_QUOTA_BYTES", str(256 * 1024**2))), DOCUMENT_NAME, b"ET01", MAX_DOCUMENT)
         self.catalog_path = store.root / "category-catalog.enc"
         self.catalog_lock = threading.RLock()
         self.slots = threading.BoundedSemaphore(16)
@@ -279,7 +281,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(lengths) != 1 or not lengths[0].isdigit():
                 raise StoreError(411, "content length required")
             size = int(lengths[0])
-            if not 32 <= size <= MAX_CHUNK:
+            if not 32 <= size <= store.max_size:
                 raise StoreError(413, "invalid chunk size")
             digest = self.headers.get("X-Content-SHA256", "")
             if not re.fullmatch(r"[0-9a-f]{64}", digest):

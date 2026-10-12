@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
-from server import MAX_CHUNK, DOCUMENT_NAME, Server, Store, StoreError
+from server import MAX_CHUNK, MAX_DOCUMENT, DOCUMENT_NAME, Server, Store, StoreError
 from recover import decrypt_chunk, download, recover
 from text_recover import decrypt_document, recover_documents
 
@@ -80,6 +80,18 @@ class ProtocolTests(unittest.TestCase):
         changed = bytearray(blob); changed[-1] ^= 1
         code, _ = self.request('/v1/documents/' + name, bytes(changed)); self.assertEqual(code, 409)
 
+    def test_large_encrypted_text_has_separate_limit_from_audio(self):
+        name = f"{SESSION}_20000000-0000-4000-8000-000000000002.enc"
+        text = json.dumps({'version': 1, 'session': SESSION, 'updatedAt': 123,
+                           'segments': [{'text': 'x' * (MAX_CHUNK + 100)}]}).encode()
+        nonce = secrets.token_bytes(12)
+        blob = b'ET01' + nonce + AESGCM(self.key).encrypt(nonce, text, ('text-v1:' + name).encode())
+        self.assertGreater(len(blob), MAX_CHUNK)
+        self.assertEqual(self.request('/v1/documents/' + name, blob)[0], 201)
+        self.assertEqual(self.request('/v1/documents/' + name)[1], blob)
+        with self.assertRaisesRegex(ValueError, 'Invalid encrypted text envelope'):
+            decrypt_document(self.key, name, blob + b'0' * MAX_DOCUMENT)
+
     def test_text_namespace_and_authentication_are_separate(self):
         name, blob, _ = self.text_envelope()
         code, _ = self.request('/v1/documents/' + name, blob, token='invalid'); self.assertEqual(code, 401)
@@ -100,7 +112,7 @@ class ProtocolTests(unittest.TestCase):
     def test_text_index_persists_when_storage_reopens(self):
         name, blob, _ = self.text_envelope(); self.request('/v1/documents/' + name, blob)
         self.server.documents.close()
-        self.server.documents = Store(self.store.root / 'texts', 256 * 1024**2, DOCUMENT_NAME, b'ET01')
+        self.server.documents = Store(self.store.root / 'texts', 256 * 1024**2, DOCUMENT_NAME, b'ET01', MAX_DOCUMENT)
         code, downloaded = self.request('/v1/documents/' + name); self.assertEqual(code, 200); self.assertEqual(downloaded, blob)
 
     def test_text_downloader_and_recovery_tool_round_trip(self):

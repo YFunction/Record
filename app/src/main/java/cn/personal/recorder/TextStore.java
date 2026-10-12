@@ -55,7 +55,7 @@ final class TextStore {
             if (!f.equals(current) && ChunkStore.uploaded(f) && f.delete()) new File(f.getPath() + ".ack").delete();
             else bytes += f.length();
         }
-        if (bytes + blob.length > 64L * 1024 * 1024) throw new java.io.IOException("文字存储已满，请先备份或清理");
+        if (bytes + blob.length > 256L * 1024 * 1024) throw new java.io.IOException("文字存储已满，请先备份或清理");
         File file = new File(directory(c), name); ChunkStore.atomicWrite(file, blob);
         try { ChunkStore.atomicWrite(new File(directory(c), session + ".latest"), name.getBytes(StandardCharsets.UTF_8)); }
         catch (Exception e) { file.delete(); throw e; }

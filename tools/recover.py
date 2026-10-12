@@ -17,6 +17,7 @@ NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 DOCUMENT_NAME = re.compile(UUID + "_" + UUID + r"\.enc\Z")
 MAX_CHUNK = 2 * 1024 * 1024
+MAX_DOCUMENT = 16 * 1024 * 1024 + 32
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -56,7 +57,7 @@ def download(server: str, output: Path, token: str, documents: bool = False):
                 if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
                     continue
                 raise ValueError(f"Existing file differs: {name}")
-            data = get("/v1/" + collection + "/" + name, MAX_CHUNK)
+            data = get("/v1/" + collection + "/" + name, MAX_DOCUMENT if documents else MAX_CHUNK)
             if len(data) != row["size"] or hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError("Download checksum mismatch")
             with target.open("xb") as file:

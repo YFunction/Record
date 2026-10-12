@@ -153,6 +153,11 @@ public final class RecordingService extends Service {
     }
     private void onCaptureStopped() {
         captureStopped = true; stoppedElapsed = android.os.SystemClock.elapsedRealtime();
+        String finishedSession = session;
+        long finalDurationMs = recorder == null ? recordedMs : recorder.durationMs();
+        if (TextStore.validSession(finishedSession) && finalDurationMs > 0)
+            markWriter.execute(() -> { try { CategoryStore.setDuration(this, finishedSession, finalDurationMs); }
+                catch (Exception ignored) { } });
         if (!liveDone) {
             finalizing = true; state = "录音已停止，正在加密保存实时文字";
             getSystemService(NotificationManager.class).notify(1, notification(state));
